@@ -11,9 +11,12 @@
 供 Phase 2 执行层（待实现）调度。
 
 用法：
-    python charter_gen.py <targets.json> <game_metadata.json> <output_dir>
-                          [--ids 1 2] [--personas 破坏狂 贪婪者]
-                          [--batch 2] [--verbose]
+    python -m joker_test.charter_gen <targets.json> <game_metadata.json> <output_dir>
+                                     [--ids 1 2] [--personas 破坏狂 贪婪者]
+                                     [--batch 2] [--verbose]
+
+或者（pip install -e . 之后）：
+    joker-test generate-charter <targets.json> <game_metadata.json> <output_dir>
 """
 
 import argparse
@@ -24,14 +27,48 @@ import os
 import sys
 from pathlib import Path
 
-# 把 SpecOps-src 加入 sys.path，复用它的 LLM 调用层（converse.py / operate.py）
+# SpecOps-src 路径解析:
+# - 开发时(本仓库):仓库根 / "SpecOps-src"  → src/joker_test/ 上溯 3 层
+# - 用户环境:可能完全不存在,需给清晰错误
 _HERE = Path(__file__).resolve().parent
-_SPECOPS_SRC = _HERE.parent / "SpecOps-src"
-if _SPECOPS_SRC.exists() and str(_SPECOPS_SRC) not in sys.path:
-    sys.path.insert(0, str(_SPECOPS_SRC))
+_REPO_ROOT = _HERE.parent.parent
+_SPECOPS_SRC_CANDIDATES = [
+    _REPO_ROOT / "SpecOps-src",                                # 仓库内同级
+    _HERE.parent.parent.parent / "SpecOps-src",                # 调研目录(开发时)
+    Path(os.environ.get("SPECOPS_SRC", "")).expanduser(),      # 环境变量覆盖
+]
 
-import converse  # noqa: E402
-import operate   # noqa: E402
+_specops_src = None
+for candidate in _SPECOPS_SRC_CANDIDATES:
+    if candidate and candidate.exists() and (candidate / "converse.py").exists():
+        _specops_src = candidate
+        break
+
+if _specops_src is not None:
+    if str(_specops_src) not in sys.path:
+        sys.path.insert(0, str(_specops_src))
+    try:
+        import converse  # noqa: E402
+        import operate   # noqa: E402
+    except ImportError as _e:
+        raise ImportError(
+            f"SpecOps-src 在 {_specops_src} 但 import 失败: {_e}\n"
+            f"请安装 SpecOps 依赖: pip install boto3 tqdm pillow"
+        ) from _e
+else:
+    raise ImportError(
+        "charter_gen.py 当前依赖 SpecOps-src 的 converse.py 和 operate.py,但找不到该目录。\n\n"
+        f"已尝试路径: {[str(p) for p in _SPECOPS_SRC_CANDIDATES if p]}\n\n"
+        "解决方案(任选其一):\n"
+        "  1. clone SpecOps 到仓库根:\n"
+        "     git clone https://github.com/yusf1013/SpecOps.git SpecOps-src\n"
+        "  2. 设置环境变量:\n"
+        "     export SPECOPS_SRC=/path/to/SpecOps\n"
+        "  3. 安装 SpecOps 依赖(若已 clone):\n"
+        "     pip install boto3 tqdm pillow\n"
+        "  4. 自己实现 converse/operate 接口(详见 DESIGN.md ADR-002)"
+    )
+
 from tqdm import tqdm  # noqa: E402
 
 logger = logging.getLogger(__name__)

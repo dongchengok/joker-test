@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "joker-test"
+version = "0.1.0"
+description = "AI-driven game testing platform — charter-driven exploratory testing + Python smoke testing with pluggable backends"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "dongcheng", email = "dongchengok@qq.com" }
+]
+keywords = ["game-testing", "ai-testing", "exploratory-testing", "llm", "qa"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "boto3>=1.34",
+    "tqdm>=4.66",
+    "pillow>=10.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "mypy>=1.8",
+    "ruff>=0.4",
+]
+opencv = [
+    "opencv-python>=4.8",
+    "pyautogui>=0.9",
+    "easyocr>=1.7",
+    "numpy>=1.26",
+]
+airtest = [
+    "airtest>=1.3",
+    "pocoui>=1.0",
+]
+report = [
+    "allure-pytest>=2.13",
+    "Jinja2>=3.1",
+]
+
+[project.scripts]
+joker-test = "joker_test.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/dongchengok/joker-test"
+Repository = "https://github.com/dongchengok/joker-test"
+Documentation = "https://github.com/dongchengok/joker-test/blob/main/DESIGN.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+joker_test = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
