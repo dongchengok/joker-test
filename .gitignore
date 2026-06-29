@@ -1,0 +1,80 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ===== 项目运行时产物 =====
+# 测试输出与报告
+outputs/
+logs/
+recordings/
+screenshots/
+keyframes/
+clips/
+
+# Allure 报告
+allure-results/
+allure-report/
+allure-history/
+
+# Coverage / Charter 回放
+coverage/
+replays/
+
+# pytest / mypy / ruff 缓存
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# 日志
+*.log
+
+# ===== 敏感配置 =====
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# ===== 临时文件 =====
+*.tmp
+*.bak
+*.orig
+
+# ===== SpecOps 参考实现(不属于 joker-test 本体)=====
+SpecOps-src/
+
+# ===== 不要把整个调研目录误传 =====
+# (防止在父目录执行 git add . 时把调研文档拖进来)
