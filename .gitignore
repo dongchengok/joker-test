@@ -16,7 +16,7 @@ venv/
 env/
 ENV/
 
-# ===== IDE =====
+# ===== IDE / 工具 =====
 .vscode/
 .idea/
 *.swp
@@ -24,6 +24,11 @@ ENV/
 *~
 .project
 .pydevproject
+
+# 本地工具个人配置（含凭据/权限，绝不入库）
+.claude/settings.local.json
+.zcode/plans/
+.zcode/sessions/
 
 # ===== OS =====
 .DS_Store
@@ -34,11 +39,20 @@ ehthumbs.db
 # ===== 项目运行时产物 =====
 # 测试输出与报告
 outputs/
+reports/
 logs/
 recordings/
 screenshots/
 keyframes/
 clips/
+
+# 探索流水线产物
+flows/
+traces/
+templates/
+
+# 被测游戏二进制与截图（不入库）
+.test-targets/
 
 # Allure 报告
 allure-results/
@@ -78,3 +92,4 @@ SpecOps-src/
 
 # ===== 不要把整个调研目录误传 =====
 # (防止在父目录执行 git add . 时把调研文档拖进来)
+tests/generated_smoke/

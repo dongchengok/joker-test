@@ -1,9 +1,9 @@
 # joker-test 架构设计文档
 
-> **文档版本**：v0.4
+> **文档版本**：v0.9
 > **创建日期**：2026-06-26
-> **状态**：草案，欢迎频繁修改
-> **关联代码**：`charter_gen.py`（Phase 1 已实现）、`SpecOps-src/`（参考实现）
+> **状态**：架构权威文档，模块实现细节见代码 docstring
+> **关联代码**：`src/joker_test/`（M0-M6 + 探索流水线已实现）、`docs/roadmap/iteration-roadmap.md`（迭代路线）
 
 ---
 
@@ -30,6 +30,7 @@
 - [8. 风险与开放问题](#8-风险与开放问题)
 - [9. 术语表](#9-术语表)
 - [10. 修改记录](#10-修改记录)
+- [11. 命名与目录设计原则](#11-命名与目录设计原则)
 
 ---
 
@@ -71,9 +72,9 @@
 ├────────────────┬─────────────────────────────────┤
 │ 冒烟/回归 (80%)│  探索式 (15-20%)                  │
 │                │                                  │
-│ Python + pytest│  LLM + 战术脚本                   │
+│ Python + pytest│  LLM 探索流水线（pipeline）       │
 │ CI 每次构建跑  │  版本前/每周跑                    │
-│ 找已知 bug     │  找未知 bug                       │
+│ 找已知 bug     │  找未知 bug + 可信度评估           │
 │ ¥0/次          │  ¥0.3-1/次                       │
 └────────────────┴─────────────────────────────────┘
 ```
@@ -86,12 +87,12 @@
 |---|---|---|
 | Charter 生成（探索意图） | ✅ | 需要创意和领域知识 |
 | 冒烟 Python 测试代码生成 | ✅ | 把需求转代码 |
-| L2 决策（探索中） | ✅ | 非确定性判断 |
-| L3 战略反思 | ✅ | 综合分析 |
-| Bug Judge | ✅ | 语义判断 |
+| 探索决策（LLM 模式每步） | ✅ | 非确定性判断（理解界面+决策下一步） |
+| 固化命中检查 | ✅ | 意图与已有资产比对（1 次，省整轮探索） |
+| 反思（可信度+风险） | ✅ | 综合分析 |
+| 误报审查 | ✅ | 语义判断（失败测试/Bug 是否真 bug） |
 | 冒烟测试执行 | ❌ | 需要确定性 + 高频 |
-| L1 实时感知 | ❌ | 延迟要求高（60 FPS） |
-| 战术脚本执行 | ❌ | 毫秒级反应 |
+| 感知（OCR/图像匹配） | ❌ | 算法可解，规则化 |
 | 数据合法性校验 | ❌ | 规则化、可枚举 |
 
 ### 2.3 插件扩展性
@@ -106,16 +107,13 @@
 
 ### 2.4 可集成性
 
-- **CLI 是核心**：所有功能可通过命令行调用
-- **MCP 是包装**：一个 MCP tool 对应一个 CLI 命令
-- **可被任何 AI Harness 调用**：Claude Code、Cursor、自研 Agent
+- **CLI 是核心契约**：人、外部 harness、内部 orchestrator 都面向同一套 CLI（R-ADR-6）
+- **MCP 降为可选增强**：仅在需结构化 tool 发现时实现（R-ADR-8 推翻了原"MCP 是包装"定位）
+- **主集成方式 = AGENTS.md + CLI**：harness 读指引后调 CLI，最省 token
 
 ### 2.5 可视化插件化
 
-- **Reporter 是和 Backend 平行的抽象**（输入侧 / 输出侧各一套）
-- 内置 5 个 reporter（Allure / Html / Json / CoverageMap / CharterReplay）
-- 用户可自研 reporter，通过配置启用
-- 多个 reporter 可同时跑（MultiReporter 广播）
+Reporter 与 Backend 平行（输入侧/输出侧各一套抽象），详见 §4.7 + ADR-009。
 
 ---
 
@@ -123,94 +121,85 @@
 
 ### 3.1 模块全景
 
+分两层：**编排层**（两条测试线 + 统一入口）建立在**基础设施层**（公共能力）之上。
+
 ```
-                    ┌──────────────────────────────────────┐
-                    │  CLI 入口 / MCP Server               │
-                    │  (暴露给 AI Harness: Claude Code,    │
-                    │   Cursor, 自研 Agent 等)             │
-                    └──────────────────────────────────────┘
-                                    │
-                ┌───────────────────┼───────────────────┐
-                │                   │                   │
-            ┌───▼───┐           ┌───▼───┐           ┌───▼────┐
-            │ 生成  │           │ 执行  │           │ 报告   │
-            └───────┘           └───────┘           └────────┘
-                │                   │                   │
-   ┌────────────┼────────────┐      │                   │
-   │            │            │      │              ┌────▼─────┐
-┌──▼──┐    ┌────▼─────┐ ┌────▼───┐  │              │ Reporter │
-│Charter│   │冒烟 Python│ │数据表 │  │              │ 插件化   │
-│生成  │   │代码生成   │ │插件   │  │              │ (Allure/ │
-│(LLM) │   │(LLM 生成, │ └────▼───┘  │              │  Html/   │
-└──┬───┘   │ 执行无 LLM)│     │      │              │  Json/   │
-   │       └─────┬─────┘     │      │              │  Coverage│
-   │             │           │      │              │  /Replay)│
-   │             ▼           │      │              └────┬─────┘
-   │       ┌──────────┐     │      │                   │
-   │       │ pytest   │     │      │                   │
-   │       │ +Backend │     │      │                   │
-   │       └──────────┘     │      │                   │
-   │                        │      │              ┌────▼────┐
-   │            ┌───────────┴──────┴──────┐       │Investiga│
-   │            │  探索式测试(三层架构)    │       │tor 验证 │
-   │            │  ┌────────────────────┐ │       │(独立查) │
-   └───────────►│  │ L1 感知 (60FPS)    │ │       └────┬────┘
-                │  │ YOLO+OCR+模板匹配  │ │            │
-                │  ├────────────────────┤ │       ┌────▼────┐
-                │  │ L2 决策 (1-3s)     │ │       │ Judge   │
-                │  │ 本地VLM+战术脚本库 │ │       │(Meta-CoT│
-                │  ├────────────────────┤ │       │ +规则校验│
-                │  │ L3 战略 (30s-2min) │ │       │ +插件)  │
-                │  │ 云端 LLM 反思      │ │       └─────────┘
-                │  └────────────────────┘ │
-                └─────────────────────────┘
+┌─ 编排层 ──────────────────────────────────────────────────────────┐
+│                                                                   │
+│   CLI 入口（统一契约，7 子命令，无参数默认 run-all，R-ADR-6）       │
+│                                                                   │
+│   ┌─ 冒烟线 ─────────────┐    ┌─ 探索流水线（pipeline）─────────┐ │
+│   │ LLM 生成 pytest 代码  │    │ AgenticOrchestrator 薄编排       │ │
+│   │ （一次性投资）         │    │                                  │ │
+│   │        ↓              │    │  Explore ──► Solidify ──► Execute│ │
+│   │ pytest 执行（脱离LLM）│    │     │                         │ │
+│   │        ↓              │    │     ▼                         │ │
+│   │ TestSession           │    │  Report ──► Reflect            │ │
+│   └───────────┬───────────┘    └──────────────┬──────────────────┘│
+│               │                               │                   │
+│               │ Charter 生成（独立议题，§4.1） │                   │
+│               │                               │                   │
+└───────────────┼───────────────────────────────┼───────────────────┘
+                │                               │
+                ▼                               ▼
+┌─ 基础设施层 ──────────────────────────────────────────────────────┐
+│                                                                   │
+│   ExecutorBackend        Reporter          LLMProvider             │
+│   (Airtest默认/Fake)     (Json/Html/       (Mock/GLM/MiMo/         │
+│        │                 Multi/Explore)     Anthropic/Bedrock)     │
+│        │                        ▲                  ▲               │
+│        ▼                        │                  │               │
+│   PerceptionEngine        flow/（录制+固化）  explorer/（DFS+LLM）  │
+│   (OCR+图像匹配+LLM识图)   reflection/（反思） generator/（生成）   │
+│                             runner/（pytest执行） plugins/（插件） │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+
+        规划态：完整三层异步引擎(L1感知/L2决策/L3战略) + Investigator
+                + Meta-CoT Judge + AllureReporter（见 §4.3/§4.4）
 ```
+
+**实现状态**：编排层两条线 ✅ 已实现；基础设施层 ✅ 已实现；虚线框/规划态标注的三层引擎、Investigator、Meta-CoT Judge、AllureReporter 均 ❌ 规划中。
 
 ### 3.2 数据流
 
+两条并行数据流（冒烟线 + 探索流水线），由 CLI 统一入口：
+
 ```
-[游戏元数据]            [插件]
-    │                    │
-    ▼                    ▼
-[Charter 生成]      [数据表+规则+工具+Reporter]
-    │                    │
-    ├─────────────┬──────┘
-    │             │
-    ▼             ▼
-[Charter JSON]  [Python 测试代码] ← 由 LLM 分别生成
-    │             │
-    │             ▼
-    │        [pytest + Backend]──[CI/CD]──→ Allure/Html 报告
-    │             │
-    │             ▼
-    │           测试结果
-    │
-    ▼
-[三层探索引擎]
-    │
-    ├─ L1 感知(60FPS)
-    ├─ L2 决策(1-3s)→ 战术脚本库(毫秒级执行)
-    └─ L3 战略(30s-2min)
-                │
-                ▼
-        [异常事件流]
-                │
-                ▼
-      [Investigator 独立验证]
-                │
-                ▼
-       [Judge 综合]
-                │
-                ▼
-        [Bug 报告 JSON]
-                │
-                ▼
-        [CLI/MCP/Reporter 输出]
+【冒烟线】（Python 脱离 LLM，CI 高频）
+[游戏元数据] + [插件]
+       │
+       ▼
+[LLM 生成 Python 测试代码] ← 一次性投资
+       │
+       ▼
+[pytest + Backend]──[CI 每次]──→ Json/Html 报告（TestSession）
+
+【探索流水线】（pipeline，LLM 克制参与）
+[测试意图] ──► ExploreStage（固化命中检查 + 三模式探索）
+                   │
+       ┌───────────┼───────────────┐
+       ▼           ▼               ▼
+   命中复用    探索+固化         探索直出
+   Execute     Solidify→Execute    │
+       │           │               │
+       └─────┬─────┘               │
+             ▼                     │
+        ReportStage ◄──────────────┘  （汇聚综合报告）
+             │
+             ▼
+        ReflectStage（可信度+风险+误报审查）
+
+完整版目标（规划中）：三层异步引擎 L1(60FPS感知)/L2(决策)/L3(战略)
++ Investigator 独立验证 + Judge(Meta-CoT)。详见 §4.3。
 ```
 
 ---
 
 ## 4. 模块详解
+
+> **实现说明**：M0-M6 已实现各模块的核心。本节给出**架构职责 + 关键设计 + 代码指针**；
+> 接口签名、数据结构、实现细节一律见代码 docstring（权威源）。
 
 ### 4.1 Charter 生成（探索式测试入口）
 
@@ -226,13 +215,8 @@
 - 双 specialist 架构（Architect 生成 + Analyst 反思）
 - `env_probing_required` 字段决定是否启动 Investigator
 
-**当前状态**：✅ `charter_gen.py` 已实现
-
-**潜在改进**：
-- ⚠️ Charter 优先级排序（5 系统 × 5 Persona = 25 个，需要排优先级）
-- ⚠️ 跨 Charter 的 Coverage Map 共享（避免重复探索）
-
-**关联文件**：`joker_test/charter_gen.py`、`joker_test/examples/*.json`
+**状态**：✅ 已实现。**代码**：`charter_gen.py`、`prompts/`（模板已抽离到独立包）
+**开放问题**：Charter 优先级排序、跨 Charter 的 Coverage Map 共享（见 §8 Q1/Q2）
 
 ---
 
@@ -241,449 +225,126 @@
 **职责**：LLM 生成 Python 测试代码 + spec 数据，pytest 执行，**执行完全无 LLM**。
 
 **核心设计**：
-- 测试**逻辑** = Python 代码（pytest 测试函数）
-- 测试**数据** = Pydantic spec（JSON/YAML）
-- 测试**执行** = pytest + ExecutorBackend
+- 测试**逻辑** = Python 代码（pytest 测试函数），LLM 生成
+- 测试**数据** = Pydantic spec（参数化用），LLM 生成
+- 测试**执行** = pytest + ExecutorBackend，无 LLM
 
-**Python 测试代码示例**（LLM 生成）：
-
-```python
-# tests/test_inventory_smoke.py
-"""背包系统冒烟测试 (LLM 生成)"""
-import pytest
-from joker_test.executor.backends import OpenCVBackend
-from joker_test.plugins import get_plugin
-
-@pytest.fixture
-def backend():
-    b = OpenCVBackend(window_title="Example ARPG")
-    b.connect()
-    yield b
-    b.close()
-
-@pytest.fixture
-def game_state(backend):
-    return get_plugin("example_arpg").create_state_reader(backend)
-
-def test_open_close_inventory(backend):
-    """测试 1:开关背包"""
-    backend.press_key("i")
-    assert backend.wait_until(lambda: backend.state.inventory_open, timeout=3)
-    backend.press_key("escape")
-    assert backend.wait_until(lambda: not backend.state.inventory_open, timeout=3)
-
-def test_continuous_open_close_memory(backend, game_state):
-    """测试:连续开关 20 次检测内存泄漏"""
-    initial_mem = game_state.memory_mb
-    for _ in range(20):
-        backend.press_key("i")
-        backend.press_key("escape")
-    final_mem = game_state.memory_mb
-    assert final_mem - initial_mem < 100, f"内存泄漏 {final_mem - initial_mem}MB"
-```
-
-**Pydantic spec 数据示例**（参数化测试）：
-
-```python
-# tests/specs/inventory_smoke_spec.py
-from pydantic import BaseModel
-from typing import Literal
-
-class InventorySmokeSpec(BaseModel):
-    target_save: str
-    expected_initial_items: list[str]
-    severity: Literal["P0", "P1", "P2"] = "P1"
-
-SPECS = [
-    InventorySmokeSpec(target_save="chapter1_start", expected_initial_items=["村长剑"]),
-    InventorySmokeSpec(target_save="mid_game", expected_initial_items=["铁剑+5"]),
-]
-
-@pytest.mark.parametrize("spec", SPECS)
-def test_inventory_with_spec(backend, spec):
-    backend.load_save(spec.target_save)
-    for item in spec.expected_items:
-        assert backend.inventory_has(item)
-```
+**生成链路**：`UIExplorer` 探索界面 → `SmokeTestGenerator` 消费 UIMap 调 LLM 生成代码 → `QualityChecker`（ruff + ast.parse）兜底 → `write_tests_to_dir` 落盘 → `runner.py`（pytest inline plugin）执行收集结果。
 
 **Backend 抽象**：
 
 ```
-Python 测试代码
-    ↓
-ExecutorBackend 接口
-    ↓
-┌─────────────────┬──────────────────┬──────────────┐
-│ AirtestBackend  │ OpenCVBackend    │ 自研 Backend │
-│ (跨平台,可选)    │ (默认,Windows)   │ (未来扩展)   │
-└─────────────────┴──────────────────┴──────────────┘
+Python 测试代码 / 探索器 / 引擎
+        ↓
+  ExecutorBackend 协议（归一化坐标 [0,1]，基准=screenshot 尺寸）
+        ↓
+┌─────────────────┬──────────────────┐
+│ AirtestBackend  │ FakeBackend      │
+│ (默认，图像识别) │ (内存模拟，CI用) │
+└─────────────────┴──────────────────┘
 ```
 
-**Backend 接口要点**：
-- `press_key / click_text / click_image / type_text / screenshot / wait_until`
-- `state` 属性（LazyState 代理，按需解析）
-- 每个 Backend 必须线程安全（为 v0.2 并行测试预留）
-
-**CI 集成**：直接用 pytest：
-
-```bash
-pytest tests/smoke/ --game=example_arpg --backend=opencv --reporters=allure
-```
-
-**潜在风险**：
-- ⚠️ LLM 生成的 Python 代码质量（用 pytest 跑一遍 + mypy 类型检查兜底）
-- ⚠️ 测试代码依赖 Backend API（Backend 接口变更要批量改测试，IDE 重构可缓解）
-
-**关联文件**：`joker_test/executor/backends/`、`tests/smoke/`（待实现）
+**状态**：✅ 已实现。**代码**：`generator/`（生成）、`runner.py`（执行）、`executor/`（Backend 抽象）
+**关联契约**：测试代码规范见 §5.2，ExecutorBackend 接口见 `executor/base.py`
 
 ---
 
-### 4.3 三层探索引擎
+### 4.3 探索流水线（已落地）+ 三层异步引擎（规划态）
 
-**职责**：执行 Charter，30 分钟内自由探索找茬。
+**职责**：探索游戏界面、固化操作为冒烟用例、执行、报告、反思。
 
-**核心改进**（相对 SpecOps 单线程）：用**战术脚本库**解决"急躁鬼快速反应"问题。
+**探索流水线**（✅ 已实现）：借 Open-AutoGLM 的循环模式（think-act-observe），保留 LLM 克制红线。薄编排 `AgenticOrchestrator` 按分支调用 5 个状态自洽的 Stage：
 
-#### L1 感知层（60 FPS）
-
-| 工具 | 用途 | 速度 |
+| Stage | 职责 | 用 LLM? |
 |---|---|---|
-| YOLO/RT-DETR/GroundingDINO | 实时 UI 元素检测 | 5-15ms |
-| OCR (PaddleOCR) | 数值文本识别 | 30ms |
-| 模板匹配 (cv2.matchTemplate) | 已知图标定位 | 1-5ms |
-| 物理规则监控 | FPS/内存/坐标越界 | <1ms |
+| Explore | 智能入口：固化命中检查（扫资产+LLM比对）+ 三模式探索（manual录像/dfs确定性/llm agentic loop），统一产 RecordedFlow | 命中检查+llm模式 |
+| Solidify | 操作轨迹→LLM生成 pytest test_case（含试跑回喂）。一次固化多次回归，脱离 LLM | 生成阶段 |
+| Execute | 跑 pytest，脱离 LLM | 否 |
+| Report | 汇聚各阶段产物为综合探索报告（ExploreReporter） | 否 |
+| Reflect | 可信度评分 + 风险提示（断言强度/覆盖率/探索充分度）+ 卡死检测 + 误报审查 | 评分+审查 |
 
-**输出**：每帧的 `GameState` 快照（detections + texts + 物理指标）
+设计详见 `docs/superpowers/specs/2026-07-09-explore-pipeline-design.md`。
 
-#### L2 决策层（1-3 秒）
+**完整版目标架构**（❌ 规划中，未实现）—— 三层异步，按延迟分级用不同模型：
 
-**输入**：当前 GameState + Charter context + Coverage Map
-**输出**：决策 JSON
+| 层 | 频率 | 工具 | 模型 |
+|---|---|---|---|
+| L1 感知 | 60 FPS | YOLO/GroundingDINO + OCR + 模板匹配 + 物理监控 | 无（纯算法） |
+| L2 决策 | 1-3 秒 | 本地 VLM 决策探索方向 | 本地 VLM |
+| L3 战略 | 30秒-2分 | session 总结 + Coverage gap 分析 | 云端 LLM |
 
-```json
-{
-  "decision_type": "apply_tactic",
-  "tactic": "rapid_esc",
-  "params": {"duration_seconds": 10},
-  "reasoning": "对话开始,急躁鬼应跳过",
-  "coverage_target": "operation.esc_skip"
-}
-```
-
-**模型**：本地 VLM（Qwen2.5-VL-7B/32B），省 API 成本。
-
-**关键**：决策"用哪个战术"，**不直接操作**。战术脚本执行具体动作。
-
-#### 战术脚本库（毫秒级执行）
-
-```python
-# joker_test/tactics/registry.py
-TACTICS = {
-    "rapid_esc": rapid_esc_loop,              # 急躁鬼: 快速 ESC 循环
-    "instant_click_on_popup": instant_click,  # 急躁鬼: UI 弹窗瞬间点击
-    "save_load_loop": save_load_loop,         # 贪婪者: 保存读档循环
-    "boundary_value_test": boundary_test,     # 贪婪者: 边界值测试
-    "extreme_combo": extreme_combo,           # 破坏狂: 极端组合输入
-    # ... 每个 Persona 一组
-}
-```
-
-**LLM 1 次决策 → 脚本执行 100 次操作**，省 99% LLM 调用。
-
-#### L3 战略层（30 秒-2 分钟）
-
-**输入**：session 总结 + Coverage Map + 已发现的异常
-**输出**：策略调整
-
-```json
-{
-  "reflection": "对话跳过战术覆盖了 80%,但状态穿越类没探索",
-  "next_focus": "status_traversal",
-  "coverage_gap": ["state.during_animation", "state.ui_popup"]
-}
-```
-
-**模型**：云端 LLM（Claude Sonnet / GPT-4o），关键判断兜底。
-
-#### 三层之间的通信
-
-```
-L1 → L2: event trigger (状态变化时唤醒 L2)
-L2 → L1: action commands (通过战术脚本注入)
-L3 → L2: strategy update (调整决策 prompt)
-L2 → L3: summary trigger (周期性总结)
-```
-
-**关联文件**：`joker_test/explorer/`（待实现）
+**状态**：探索流水线 ✅ 已实现（`pipeline/` 包）；完整三层异步引擎 ❌ 规划中。**代码**：`pipeline/`（5 Stage + AgenticOrchestrator）、`reflection.py`（反思复用）
 
 ---
 
-### 4.4 报告与误报处理
+### 4.4 反思与误报处理
 
-**职责**：验证异常、生成 Bug 报告、防误报。
+**职责**：评估测试可信度、提示风险、过滤误报。
 
-继承 SpecOps Phase 4 的核心结构（Investigator + Judge + Meta-CoT），增加游戏特化能力。
+**当前实现**（✅ ReflectStage，`pipeline/stages/reflect.py`）：流水线的反思阶段，四项职责：
+- **卡死检测**（确定性，复用 `reflection.detect_stuck_loop`）：连续 N 次操作信号相同 → 疑似卡死
+- **误报审查**（LLM，复用 `reflection.review_failure`）：对 failed 测试调 LLM 判断"真 bug vs 误报（断言写错/fixture 问题/环境问题）"
+- **可信度评分**（LLM）：综合断言强度/覆盖率/探索充分度给 0.0-1.0 分
+- **风险提示**（LLM）：未覆盖区域/探索中断/低可信等风险项（含 severity P1/P2）
 
-#### 4.4.1 异常事件触发
+**降级策略**：LLM 调用失败时降级为低可信度（0.3）+ 确定性卡死检测，不阻断流水线。
 
-```python
-TRIGGER_CONDITIONS = [
-    physical_rule_violation,        # FPS<30, 内存>2GB, 坐标越界
-    state_deviation_from_baseline,  # 偏离 expected_behaviors
-    plugin_rule_violation,          # 插件规则校验失败
-    vlm_anomaly_detection,          # VLM 判断"不正常"
-]
-```
+**游戏 Bug 标准**（5 类，权威契约，供反思/审查 prompt 引用）：
+- 视觉异常：穿模/UI 错位/贴图丢失/动画卡死/坐标越界
+- 状态异常：数值越界（金币为负/血量超上限）/状态不同步
+- 流程异常：任务无法完成/对话矛盾/流程死锁/软锁存档
+- 经济异常：金币物品复制/刷分漏洞/负数套利
+- 性能异常：FPS 暴跌/内存泄漏/加载超时
+- **防过度报**：bug 必须 prompt+环境可观察下可避免；体验建议不算 bug
 
-#### 4.4.2 Investigator 独立验证（三方案可选）
-
-| 方案 | 精度 | 侵入性 | 通用性 | 推荐 |
-|---|---|---|---|---|
-| 内存读取（插件） | 100% | 高 | 低（每游戏适配） | 关键场景 |
-| 反向 VLM Agent | 中 | 低 | 高 | **默认方案** |
-| 游戏控制台（插件） | 高 | 中 | 中 | 游戏支持时 |
-
-**默认走 VLM Agent**，内存读取和控制台作为可选插件增强。
-
-#### 4.4.3 Judge 综合判断
-
-```python
-class Judge:
-    def __init__(self, plugins):
-        self.plugins = plugins
-    
-    def judge(self, evidence):
-        # Step 1: 插件规则校验 (确定性,优先级最高)
-        rule_violations = self.check_plugin_rules(evidence)
-        
-        # Step 2: Meta-CoT (LLM 生成问题→回答)
-        questions = self.generate_cot_questions(evidence)
-        answers = self.answer_questions(evidence, questions)
-        
-        # Step 3: 综合 5 条 bug 标准 (游戏版)
-        bug_decision = self.apply_bug_standards(answers, rule_violations)
-        return bug_decision
-```
-
-#### 4.4.4 游戏 Bug 标准
-
-```python
-GAME_BUG_STANDARDS = [
-    "视觉异常:穿模/UI 错位/贴图丢失/动画卡死/坐标越界",
-    "状态异常:数值越界(金币为负/血量超上限)/状态不同步",
-    "流程异常:任务无法完成/对话矛盾/流程死锁/软锁存档",
-    "经济异常:金币物品复制/刷分漏洞/负数套利",
-    "性能异常:FPS 暴跌/内存泄漏/加载超时",
-    
-    # 防过度报
-    "agent 不是千里眼:bug 必须 prompt 和环境可观察下可避免",
-    "体验建议不算 bug:细节优化走另外的报告渠道",
-]
-```
-
-#### 4.4.5 Bug 报告 Schema
-
-详见 [5.3 Bug 报告 Schema](#53-bug-报告-schema待实现)。
-
-**关联文件**：`joker_test/judge/`（待实现）
+**规划态**（❌ 未实现）：Investigator 独立验证（三方案见 ADR-005，默认反向 VLM）+ Meta-CoT Judge 综合判断 + 完整 BugReport Schema（§5.3）。待完整三层引擎落地。
 
 ---
 
 ### 4.5 插件系统
 
-**职责**：让每个游戏可以有专属扩展。
+**职责**：让每个游戏可以有专属扩展，主框架保持通用。
 
-#### 4.5.1 插件能提供什么
+**4 类扩展点**（ADR-003，v0.1 不开放 Persona/Heuristics 扩展，ADR-007）：
 
 | 类型 | 提供什么 | 例子 |
 |---|---|---|
-| 数据源 | 游戏数据表 schema | 所有 NPC/武器/任务的合法值 |
+| 数据源 | 游戏数据表 schema | NPC/武器/任务的合法值 |
 | 校验规则 | 自定义 Bug 检测 | "金币不能为负" |
 | 工具 | 自定义操作工具 | 内存读取、控制台命令 |
-| Reporter | 自定义可视化 | 经济平衡图、战斗统计图 |
+| Reporter | 自定义可视化 | 经济平衡图 |
 
-#### 4.5.2 插件接口（v0.1 最小集）
+**设计要点**：
+- `GamePlugin` 是 **Protocol**（结构性子类型，无需显式继承）
+- 加载机制 = importlib 动态发现（仿 pytest 插件）
 
-```python
-# joker_test/plugins/base.py
-from typing import Callable
-from pydantic import BaseModel
-
-class PluginDataSchema(BaseModel):
-    name: str
-    schema: dict
-    data: list[dict]
-
-class ValidationRule(BaseModel):
-    name: str
-    description: str
-    check: Callable[[GameState], bool]
-    severity: str = "P1"
-
-class GamePlugin:
-    """所有插件的基类。"""
-    
-    name: str
-    version: str = "0.1.0"
-    
-    def get_data_schemas(self) -> list[PluginDataSchema]:
-        return []
-    
-    def get_validation_rules(self) -> list[ValidationRule]:
-        return []
-    
-    def get_tools(self) -> dict[str, Callable]:
-        return {}
-    
-    def get_reporters(self) -> list:  # 返回 list[TestReporter]
-        return []
-```
-
-**v0.1 故意不开放 Persona / Heuristics 扩展**（接口稳定性优先）。
-
-#### 4.5.3 加载机制
-
-```python
-# joker_test/plugins/loader.py
-def load_plugins(plugin_dir: Path) -> list[GamePlugin]:
-    """自动发现并加载插件(类似 pytest 插件机制)"""
-    plugins = []
-    for py_file in plugin_dir.glob("*.py"):
-        if py_file.name.startswith("_"):
-            continue
-        module = importlib.import_module(py_file.stem)
-        for attr in dir(module):
-            obj = getattr(module, attr)
-            if (isinstance(obj, type) 
-                and issubclass(obj, GamePlugin) 
-                and obj is not GamePlugin):
-                plugins.append(obj())
-    return plugins
-```
-
-#### 4.5.4 插件示例
-
-```python
-# plugins/example_arpg.py
-class ExampleARPGPlugin(GamePlugin):
-    name = "example_arpg"
-    version = "1.0.0"
-    
-    def get_data_schemas(self):
-        return [
-            PluginDataSchema(
-                name="weapons",
-                schema={"type": "object", "properties": {...}},
-                data=load_weapon_table(),
-            ),
-        ]
-    
-    def get_validation_rules(self):
-        return [
-            ValidationRule(
-                name="gold_non_negative",
-                description="金币不能为负",
-                check=lambda state: state.gold >= 0,
-                severity="P0",
-            ),
-        ]
-    
-    def get_tools(self):
-        return {
-            "read_memory": self._read_memory,
-            "console_command": self._console_command,
-        }
-    
-    def get_reporters(self):
-        from joker_test.reporters.base import TestReporter
-        return [EconomyBalanceReporter()]   # 游戏特有可视化
-```
-
-**关联文件**：`joker_test/plugins/`（待实现）
+**状态**：✅ 已实现。**代码**：`plugins/base.py`（GamePlugin Protocol + DefaultPlugin）、`plugins/loader.py`
 
 ---
 
 ### 4.6 CLI + MCP 集成
 
-**职责**：让 joker-test 可被任何 AI Harness 调用。
+**职责**：让 joker-test 可被人、外部 AI Harness、内部 orchestrator 调用。
 
-#### 4.6.1 CLI 命令设计
+**集成架构**（权威，详见 roadmap §9 / R-ADR-6/7/8）：
+- **编排者可替换 + CLI 是统一契约**（R-ADR-6）：人 / 外部 harness / 内部 orchestrator 面向同一套 CLI
+- **三种集成方式**（R-ADR-8）：①CLI（人，核心）②**AGENTS.md + CLI**（harness 主方式，最省 token）③MCP Server（可选增强）
+- **不抽象 Harness 层**（R-ADR-7）：编排策略可插拔（AgenticOrchestrator 薄编排，见 §4.3）
 
-```bash
-# 生成
-joker-test generate charter \
-    --game example_arpg \
-    --targets 铁匠铺 \
-    --personas 破坏狂 贪婪者
+**已实现的 CLI 子命令**（`cli.py`，7 个，无参数默认等价 `run-all`）：
+- `explore`：智能探索入口（固化命中检查 + 三模式探索 + 可串联固化/执行，§4.3）
+- `generate-charter`：Charter 生成（§4.1）
+- `explore-ui`：界面探索（产出 UIMap，§4.2）
+- `run-smoke`：跑冒烟测试 + 报告（§4.2）
+- `run-all`：AgenticOrchestrator 编排 探索→固化→执行→报告→反思（§4.3 + §4.7）
+- `validate`：校验 charter schema + 测试语法
+- `record`：录制操作流程（pynput 监听）→ LLM 起名 → 坐标语义化 + 生成 test_case（`flow/` 包）
 
-joker-test generate smoke \
-    --game example_arpg \
-    --targets 主线任务 \
-    --output tests/smoke/
+`explore` / `explore-ui` / `run-all` / `record` 支持 `--no-trace` 关闭全局 trace（默认开启，见 §11.9）。
 
-# 执行
-joker-test run charter T01_C01_破坏狂_铁匠铺.json [--async]
-joker-test run smoke tests/smoke/test_inventory.py
-joker-test run all --game example_arpg --type exploratory --limit 5
+**MCP Server**：❌ 未实现（可选增强，R-ADR-8，推迟到按需）
 
-# 查询
-joker-test status <session_id>
-joker-test list sessions [--game example_arpg]
-
-# 报告(详见 4.7)
-joker-test report <session_id> --reporters allure,html
-joker-test report <session_id> --bugs-only --severity P0
-
-# 校验
-joker-test validate charter T01_C01_破坏狂_铁匠铺.json
-joker-test validate smoke tests/smoke/test_inventory.py
-
-# 插件
-joker-test plugin list
-joker-test plugin info example_arpg
-```
-
-#### 4.6.2 MCP Server 设计
-
-```python
-# joker_test/mcp/server.py
-from mcp.server import Server
-
-server = Server("joker-test")
-
-@server.tool()
-async def generate_charters(game: str, targets: list[str], personas: list[str]) -> list[dict]:
-    """生成探索式测试章程"""
-    ...
-
-@server.tool()
-async def run_charter_async(charter_id: str) -> str:
-    """异步执行,返回 session_id"""
-    ...
-
-@server.tool()
-async def get_session_status(session_id: str) -> dict:
-    """查询异步执行状态"""
-    ...
-
-@server.tool()
-async def get_bug_report(session_id: str) -> dict:
-    """获取 bug 报告"""
-    ...
-```
-
-#### 4.6.3 AI Harness 调用示例
-
-```
-用户: "帮我测一下 example_arpg 的铁匠铺强化系统"
-Claude Code → MCP → joker_test.generate_charters(...) 
-         → 拿到 charter 列表 → 给用户看
-         → 用户选一个 → MCP → joker_test.run_charter_async(...)
-         → 拿到 session_id → MCP → joker_test.get_bug_report(...)
-         → 给用户看 bug
-```
-
-**关联文件**：`joker_test/cli/`、`joker_test/mcp/`（待实现）
+**关联文件**：`cli.py`、`pipeline/`（编排器 + Stage）
 
 ---
 
@@ -691,155 +352,26 @@ Claude Code → MCP → joker_test.generate_charters(...)
 
 **职责**：把"测试做了什么、结果如何、为什么失败"用人类能看懂的方式呈现。
 
-**核心设计**：Reporter 是和 Backend 平行的抽象 —— Backend 管"操作游戏"，Reporter 管"呈现结果"。两者互不耦合。
+**核心设计**：Reporter 与 Backend 平行（输入侧/输出侧各一套抽象），ADR-009。
 
-#### 4.7.1 TestReporter 接口
+**TestReporter 协议**（Protocol + `@runtime_checkable`，5 个 hook）：
+- `on_session_start` / `on_test_start` / `on_test_end` / `on_session_end` / `finalize`
 
-```python
-# joker_test/reporters/base.py
-class TestReporter(ABC):
-    """所有 reporter 的基类。"""
-    
-    name: str
-    
-    @abstractmethod
-    def on_session_start(self, session: TestSession) -> None: ...
-    
-    @abstractmethod
-    def on_test_start(self, test: TestCase) -> None: ...
-    
-    @abstractmethod
-    def on_step(self, test: TestCase, step: TestStep) -> None: ...
-    
-    @abstractmethod
-    def on_attachment(self, test_name: str, attachment: Attachment) -> None: ...
-    
-    @abstractmethod
-    def on_test_end(self, result: TestResult) -> None: ...
-    
-    @abstractmethod
-    def on_session_end(self, session: TestSession) -> None: ...
-    
-    @abstractmethod
-    def finalize(self) -> str:
-        """生成报告,返回路径或 URL"""
-```
+**内置实现**：
 
-#### 4.7.2 内置 5 个 Reporter
-
-| Reporter | 用途 | 典型场景 |
+| Reporter | 状态 | 用途 |
 |---|---|---|
-| **AllureReporter**（默认） | 工业标准 Web 报告 + 历史趋势 + 附件管理 | CI / 团队 server |
-| **HtmlReporter** | 单 HTML 文件 | 本地开发 |
-| **JsonReporter** | 机器可读 JSON | 给 CI 系统消费 |
-| **CoverageMapReporter** | 4 维覆盖度热图（**joker-test 特色**） | 探索式测试 |
-| **CharterReplayReporter** | Charter 30 分钟轨迹回放（15x 加速） | 探索式测试归档 |
+| `JsonReporter` | ✅ | 机器可读 JSON（给 CI 消费） |
+| `HtmlReporter` | ✅ | 单 HTML 文件（本地开发） |
+| `MultiReporter` | ✅ | 广播 + 错误隔离（一个崩了不影响其他） |
+| `ExploreReporter` | ✅ | 综合探索报告 JSON（汇聚 pipeline 各阶段产物，`reporters/explore.py`） |
+| AllureReporter | ❌ 规划 | 工业标准 Web 报告 |
+| CoverageMapReporter | ❌ 规划 | 4 维覆盖度热图（特色） |
+| CharterReplayReporter | ❌ 规划 | Charter 轨迹回放 |
 
-#### 4.7.3 MultiReporter：组合多个 reporter 同时跑
-
-```python
-class MultiReporter(TestReporter):
-    """组合多个 reporter,事件广播。"""
-    
-    def __init__(self, reporters: list[TestReporter]):
-        self.reporters = reporters
-    
-    def on_test_start(self, test):
-        for r in self.reporters:
-            try:
-                r.on_test_start(test)
-            except Exception as e:
-                logger.warning(f"Reporter {r.name} 失败: {e}")   # 错误隔离
-    
-    # ... 其他方法同理
-    
-    def finalize(self) -> str:
-        paths = []
-        for r in self.reporters:
-            path = r.finalize()
-            paths.append(f"  • {r.name}: {path}")
-        return "\n".join(paths)
-```
-
-**关键设计**：**错误隔离**（一个 reporter 崩了不影响其他）。
-
-#### 4.7.4 配置方式
-
-```yaml
-# joker-test.yaml
-reporters:
-  - name: allure
-    enabled: true
-    config:
-      results_dir: allure-results
-  - name: json
-    enabled: true
-    config:
-      output: test-results.json
-  - name: coverage_map
-    enabled: false   # 按需开启
-```
-
-CLI：
-
-```bash
-# 启用多个
-joker-test run smoke tests/ --reporters allure,json
-
-# 禁用所有(只输出控制台)
-joker-test run smoke tests/ --no-reports
-```
-
-#### 4.7.5 典型场景下的 Reporter 组合
-
-| 场景 | 推荐 reporter 组合 |
-|---|---|
-| 本地开发调试 | html |
-| CI 跑冒烟 | allure + json |
-| 团队 server 部署 | allure + coverage_map |
-| 探索式 charter 跑 | allure + charter_replay + coverage |
-| Bug 复现归档 | json + charter_replay |
-
-#### 4.7.6 Allure 集成要点
-
-```python
-# tests/conftest.py
-import allure
-
-@pytest.fixture
-def backend():
-    b = OpenCVBackend(window_title="Example ARPG")
-    b.connect()
-    
-    # 钩子:每次操作自动截图给 Allure
-    original_click = b.click_text
-    def wrapped_click(text):
-        result = original_click(text)
-        allure.attach(b.screenshot(), name=f"点击: {text}", 
-                      attachment_type=allure.attachment_type.PNG)
-        return result
-    b.click_text = wrapped_click
-    
-    yield b
-    b.close()
-
-@pytest.hookimpl(hookwrapper=True, tryfirst=True)
-def pytest_runtest_makereport(item, call):
-    outcome = yield
-    report = outcome.get_result()
-    
-    # 测试失败时自动附加完整状态
-    if report.failed and "backend" in item.funcargs:
-        backend = item.funcargs["backend"]
-        allure.attach(str(backend.state.dict()), 
-                      name="失败时的 GameState",
-                      attachment_type=allure.attachment_type.TEXT)
-```
-
-**关联文件**：`joker_test/reporters/`（待实现）
+**状态**：核心 4 个 ✅ 已实现。**代码**：`reporters/base.py`（协议 + 数据契约）、`reporters/{json,html,multi}/`、`reporters/explore.py`（ExploreReporter + ExploreReport 模型）。**关联契约**：数据结构见 `reporters/base.py`（TestSession/TestCase/TestResult）
 
 ---
-
 ## 5. 数据契约
 
 ### 5.1 Charter JSON Schema（已实现）
@@ -870,36 +402,19 @@ def pytest_runtest_makereport(item, call):
 
 **关联文件**：`joker_test/charter_gen.py`
 
-### 5.2 测试代码规范（Python + Pydantic spec）
+### 5.2 测试代码规范（Python + Pydantic spec，ADR-008）
 
-**测试逻辑层**（Python 代码）：
-- 文件位置：`tests/smoke/test_<system>.py`
-- 命名规范：`test_<测试目标>_<测试点>`（如 `test_inventory_open_close`）
-- 必须用 pytest fixture（`backend` / `game_state`）
-- 一个测试函数只测一件事
+测试分两层（详细规范见 §11.10 + `prompts/constants/smoke_quality_rules.md`）：
+- **逻辑层**：`test_<system>.py`，pytest 函数 + `backend` fixture，一个函数测一件事
+- **数据层**：`<system>_spec.py`，Pydantic BaseModel，`@pytest.mark.parametrize` 注入
 
-**测试数据层**（Pydantic spec）：
-- 文件位置：`tests/specs/<system>_spec.py` 或 `.json` / `.yaml`
-- 用 Pydantic BaseModel 定义
-- 通过 pytest 参数化（`@pytest.mark.parametrize`）注入
+**关联文件**：`generator/quality.py`（质量检查）、`prompts/constants/smoke_quality_rules.md`
 
-**示例**：
+### 5.3 Bug 报告 Schema（规划态）
 
-```python
-# tests/specs/inventory_spec.py
-from pydantic import BaseModel, Field
-from typing import Literal
+> 当前 pipeline 不产出 BugReport。测试结果走 `TestSession`（§5.5），探索反思走 `ReflectResult`（可信度+风险+误报，见 `pipeline/types.py`）。本 Schema 为完整三层引擎落地后的目标，待 Investigator + Meta-CoT Judge 实现时采用。
 
-class InventoryTestSpec(BaseModel):
-    name: str = Field(..., min_length=3)
-    target_save: str
-    expected_items: list[str] = Field(..., min_items=1)
-    severity: Literal["P0", "P1", "P2"] = "P1"
-```
-
-**关联文件**：`joker_test/specs/`、`tests/smoke/`（待实现）
-
-### 5.3 Bug 报告 Schema（待实现）
+完整版 Schema（规划中）：
 
 ```json
 {
@@ -923,67 +438,18 @@ class InventoryTestSpec(BaseModel):
 }
 ```
 
-**关联文件**：`joker_test/judge/schema.py`（待实现）
+### 5.4 GameState Schema（完整版目标，规划中）
 
-### 5.4 GameState Schema（运行时状态）
-
-```python
-class GameState(BaseModel):
-    """L1 感知层输出的状态快照"""
-    timestamp: float
-    frame: bytes
-    
-    detections: list[Detection]           # YOLO 检测结果
-    texts: list[TextRecognition]          # OCR 结果
-    
-    fps: float
-    memory_mb: float
-    cpu_percent: float
-    
-    player_state: dict | None             # 玩家位置/血量/buff
-    inventory: list | None
-    quest_log: list | None
-```
-
-**关联文件**：`joker_test/explorer/state.py`（待实现）
+完整 L1 感知层状态快照（detections/texts/fps/memory/cpu/player_state/inventory/quest_log）。
+**当前实现**：`executor/base.py:LazyState` 是最小子集（texts + find_text），完整版待 M4 三层引擎。
 
 ### 5.5 Reporter 数据契约
 
-```python
-@dataclass
-class TestSession:
-    id: str
-    started_at: datetime
-    game: str
-    backend: str
-    tests: list[TestCase]
-
-@dataclass
-class TestCase:
-    name: str
-    module: str
-    tags: list[str]
-    severity: str
-    steps: list[TestStep]
-
-@dataclass
-class TestResult:
-    test: TestCase
-    status: TestStatus    # passed/failed/skipped/error
-    duration: float
-    error: str | None
-    attachments: list[Attachment]
-
-@dataclass
-class Attachment:
-    name: str
-    data: bytes | str
-    type: Literal["png", "jpg", "mp4", "json", "text", "html"]
-```
-
-**关联文件**：`joker_test/reporters/base.py`（待实现）
+**已实现**，见 `reporters/base.py`：TestSession / TestCase / TestResult / Attachment（pydantic BaseModel）。
+TestReporter 协议（5 个 hook）见同文件。
 
 ---
+
 
 ## 6. 关键决策记录（ADR）
 
@@ -1003,16 +469,14 @@ class Attachment:
   - ✅ 上手即用，pytest 生态完整
   - ❌ LLM 生成代码不可声明式校验（用 Pydantic 校验 spec 数据部分弥补）
 
-### ADR-002：抽象 ExecutorBackend 接口，Airtest 是可选 backend
+### ADR-002：抽象 ExecutorBackend 接口，Airtest 是默认 backend
 
-- **状态**：已采纳
-- **决策**：抽象 `ExecutorBackend` 接口，提供至少 2 个实现：
-  - `OpenCVBackend`（默认，cv2 + pyautogui + easyocr，Windows 友好）
-  - `AirtestBackend`（可选，airtest + pocoui，跨平台 + Poco UI 树）
-- **理由**：不被任何框架锁定；默认依赖最小；用户按需选 backend。
-- **后果**：
-  - ✅ 主体是 joker-test，Airtest 是插件
-  - ❌ 需要维护多个 backend 实现
+- **状态**：已采纳（**R-ADR-5 修订**：默认从 OpenCVBackend 改为 AirtestBackend）
+- **决策**：抽象 `ExecutorBackend` 接口，当前 2 个实现：
+  - `AirtestBackend`（**默认**，airtest 图像识别，引擎无关；D6/R-ADR-5）
+  - `FakeBackend`（内存模拟，CI 用）
+- **理由**：引擎无关；图像识别为核心（D7）；Poco 为 Unity 可选增强
+- **后果**：✅ 不被框架锁定；❌ 需维护多 backend（OpenCVBackend 从未实现，已从计划移除）
 
 ### ADR-003：插件用 Python 类，不用配置文件
 
@@ -1025,12 +489,12 @@ class Attachment:
 
 ### ADR-004：三层架构而非两层
 
-- **状态**：已采纳
+- **状态**：已采纳（**规划态**，当前实现为同步流水线，见 ADR-011）
 - **决策**：三层异步架构（L1 感知 60FPS / L2 决策 1-3s / L3 战略 30s-2min）。
-- **理由**：游戏实时性要求高；不同延迟层级用不同模型；战术脚本独立执行。
+- **理由**：游戏实时性要求高；不同延迟层级用不同模型。
 - **后果**：
   - ✅ 延迟可控，成本优化（80% 用本地模型）
-  - ❌ 架构复杂度增加
+  - ❌ 架构复杂度增加；当前用同步 pipeline 作为简化先行版
 
 ### ADR-005：默认 Investigator 用反向 VLM，不用内存读取
 
@@ -1041,14 +505,12 @@ class Attachment:
   - ✅ 开箱即用，通用性强
   - ❌ 精度不如内存读取
 
-### ADR-006：CLI 是核心，MCP 是包装
+### ADR-006：CLI 是统一契约，MCP 可选增强
 
-- **状态**：已采纳
-- **决策**：CLI 核心优先，MCP 包装 CLI。
-- **理由**：CLI 易测试；MCP 实现简单（一个 tool 对应一个 CLI 命令）；用户可单独用 CLI。
-- **后果**：
-  - ✅ 测试友好，灵活集成
-  - ❌ CLI 状态管理稍复杂
+- **状态**：已采纳（**R-ADR-8 修订**：MCP 从"包装"降为"可选增强"）
+- **决策**：CLI 是核心契约（人/harness/orchestrator 都面向它）；MCP 降为可选，仅在需结构化 tool 发现时实现
+- **理由**：CLI 易测试、可单独用；主集成方式 = AGENTS.md + CLI（harness 读指引调 CLI，最省 token）
+- **后果**：✅ 测试友好，灵活集成；❌ CLI 状态管理稍复杂
 
 ### ADR-007：第一版插件接口不开放 Persona/Heuristics 扩展
 
@@ -1070,10 +532,10 @@ class Attachment:
   - ✅ 逻辑层用 Python 全部能力，数据层有 schema 校验
   - ❌ 两层分离需要规范（命名约定、目录结构）
 
-### ADR-009：抽象 TestReporter 接口，Allure 是默认 reporter
+### ADR-009：抽象 TestReporter 接口
 
-- **状态**：已采纳
-- **决策**：抽象 `TestReporter` 接口，内置 5 个实现（Allure / Html / Json / CoverageMap / CharterReplay），Allure 是默认。
+- **状态**：已采纳（**修订**：Allure 未实现，当前默认冒烟用 Json+Html via MultiReporter，探索用 ExploreReporter）
+- **决策**：抽象 `TestReporter` 接口，内置实现 Json/Html/Multi/Explore（✅ 已实现）+ Allure/CoverageMap/CharterReplay（❌ 规划）。
 - **理由**：
   1. 不同场景需要不同 reporter（本地 vs CI vs 团队 server）
   2. 解耦（核心代码不依赖具体 reporter）
@@ -1092,65 +554,22 @@ class Attachment:
   - ✅ 灵活，游戏可以有自己的可视化
   - ❌ 用户要理解"通用 reporter + 游戏特化 reporter"两个层级
 
+### ADR-011：探索流水线取代战术库 bug 查找
+
+- **状态**：已采纳
+- **决策**：删除 `orchestrator.py`（StaticOrchestrator）、`exploratory.py`（战术库+Judge）、`tactics.py`（5 战术），以 `pipeline/` 包的 AgenticOrchestrator 薄编排 5 个 Stage（Explore/Solidify/Execute/Report/Reflect）作为统一探索流水线。借鉴 Open-AutoGLM 的循环模式，保留 §2.2 LLM 克制红线（LLM 仍在命中检查/探索决策/固化生成/可信度评分的高价值点用）。
+- **理由**：战术库 bug 查找（M4 简化版）与冒烟/探索式两条线割裂，StaticOrchestrator 只跑半边；pipeline 把分散能力（GlobalRecorder/LLMExplorer/UIExplorer/RecordedFlowGenerator/reflection/reporters）整合为统一四阶段 DAG，支持智能固化命中（已固化资产复用）、三模式探索、全自动编排与独立命令。固化产物是持久化资产（一次固化 N 次回归，脱离 LLM）。
+- **后果**：
+  - ✅ 统一探索入口，CLI 无参数默认 run-all
+  - ✅ Stage 状态自洽、薄编排避免网状依赖（§11 规范）
+  - ❌ 战术库的"急躁鬼/贪婪者/破坏狂"Persona 驱动 bug 查找能力暂失，待完整三层引擎落地时以新形式回归
+
 ---
 
 ## 7. 落地路径
 
-### 阶段 1：MVP 骨架（1-2 周）
-
-**目标**：能生成 charter + 加载插件 + 输出 CLI 报告（mock LLM 跑通端到端）
-
-**任务**：
-- [ ] Plugin 接口（v0.1 最小集）+ 加载器
-- [ ] CLI 入口框架（基于 click 或 typer）
-- [ ] validate 命令（校验 charter / Python 测试代码）
-- [ ] 最小 mock 执行器（不真跑游戏，只模拟输出）
-- [ ] 端到端 demo 脚本
-
-**完成标志**：`joker-test generate charter ... && joker-test validate charter ... && joker-test run charter ... --mock` 能跑通
-
-### 阶段 2：冒烟测试链路（1-2 周）
-
-**目标**：LLM 生成 Python 测试代码 → pytest 跑 → Allure 报告
-
-**任务**：
-- [ ] `ExecutorBackend` 接口定义（Pydantic-style ABC）
-- [ ] `OpenCVBackend` 实现（默认，cv2 + pyautogui + easyocr）
-- [ ] `AirtestBackend` 实现（可选）
-- [ ] `LazyState` 代理（按需解析 state）
-- [ ] LLM 生成 Python 测试代码的 prompt 模板
-- [ ] Pytest fixture 体系（`backend` / `game_state` / `plugin`）
-- [ ] `TestReporter` 接口 + `AllureReporter` + `HtmlReporter` + `JsonReporter`
-- [ ] `MultiReporter` 广播机制
-- [ ] conftest.py 集成（自动截图 / 失败附加 state）
-
-**完成标志**：能在 example_arpg 上跑通 1 个 Python 冒烟测试，产出 Allure 报告
-
-### 阶段 3：探索式执行链路（3-4 周）
-
-**目标**：Charter 能跑 30 分钟，产出 bug 报告
-
-**任务**：
-- [ ] 战术脚本库（5 个 Persona × 5 个战术 = 25 个）
-- [ ] 三层异步架构（L1/L2/L3 协程）
-- [ ] Investigator（默认 VLM Agent）
-- [ ] Judge（Meta-CoT + 插件规则校验）
-- [ ] Bug 报告生成
-- [ ] `CoverageMapReporter` + `CharterReplayReporter`
-
-**完成标志**：在 example_arpg 上跑一个破坏狂 charter，发现 1-3 个真实 bug
-
-### 阶段 4：工业化包装（1-2 周）
-
-**目标**：Claude Code 能通过 MCP 调用整套测试流程
-
-**任务**：
-- [ ] MCP Server（基于官方 MCP SDK）
-- [ ] 文档（README + 用户指南 + 插件开发指南）
-- [ ] 性能优化（缓存、并发）
-- [ ] 示例插件（example_arpg）
-
-**完成标志**：Claude Code 通过 MCP 完成一次"生成 → 执行 → 报告"全流程
+> **已迁移**：落地路径由 `docs/roadmap/iteration-roadmap.md` 维护（垂直切片 M0-M6，滚动更新）。
+> 原 §7 的水平阶段设计已被取代。
 
 ---
 
@@ -1160,14 +579,14 @@ class Attachment:
 
 | # | 风险 | 严重度 | 缓解 | 状态 |
 |---|---|---|---|---|
-| R1 | 插件接口稳定性（一旦定下难改） | 高 | v0.1 只开放核心扩展点 | 监控中 |
-| R2 | LLM 生成 Python 测试代码质量参差 | 高 | pytest 跑一遍 + mypy 类型检查 + 人工 review | 待验证 |
-| R3 | 内存读取的游戏适配成本 | 中 | 默认 VLM Agent，内存读取可选 | 已决策 |
+| R1 | 插件接口稳定性（一旦定下难改） | 高 | v0.1 只开放核心扩展点 | 监控中（Protocol 已实现） |
+| R2 | LLM 生成 Python 测试代码质量参差 | 高 | QualityChecker(ruff+ast) + pytest + mypy | 已落地（待持续验证） |
+| R3 | 内存读取的游戏适配成本 | 中 | 默认 VLM Agent，内存读取可选（ADR-005） | 已决策 |
 | R4 | 长时间 charter 状态管理 | 中 | session ID + 中间状态持久化 | 待设计 |
-| R5 | Airtest 是 GPL-3.0 | 中 | 仅分发触发，不传染 SaaS | 可接受 |
-| R6 | 战术脚本库的覆盖度 | 中 | 5 Persona × 5 战术起步，可扩展 | 待实现 |
+| R5 | Airtest 是 GPL-3.0 | 低 | 内部/SaaS 使用不传染（D5） | ✅ 已解决 |
+| R6 | 战术脚本库的覆盖度 | 中 | 战术库（tactics/exploratory）已删除，探索改走 pipeline 三模式 | 已废弃（改走 pipeline） |
 | R7 | LLM 成本失控 | 中 | 本地 VLM 为主，关键判断走云端 | 设计中 |
-| R8 | Reporter 接口稳定性 | 中 | v0.1 接口简单(7 方法)，稳定后再扩展 | 监控中 |
+| R8 | Reporter 接口稳定性 | 中 | v0.1 接口简单（5 hook Protocol），稳定后再扩展 | ✅ 已实现 |
 
 ### 8.2 开放问题（待讨论）
 
@@ -1192,18 +611,172 @@ class Attachment:
 | **Persona** | 玩家人格（破坏狂/贪婪者/急躁鬼/完美主义/混乱中立） |
 | **Heuristics** | QA 经验启发式（如"测试边界值"、"测试时序错乱"） |
 | **Coverage Map** | 覆盖度地图（4 维：区域/功能/操作/状态） |
-| **Tactic** | 战术脚本（毫秒级执行的具体操作模式） |
-| **ExecutorBackend** | 执行后端抽象（OpenCVBackend / AirtestBackend 等） |
-| **TestReporter** | 报告器抽象（AllureReporter / HtmlReporter 等） |
+| **Tactic** | 战术脚本（已废弃，探索改走 pipeline 三模式） |
+| **Stage** | 流水线阶段（Explore/Solidify/Execute/Report/Reflect，状态自洽） |
+| **ExecutorBackend** | 执行后端抽象（AirtestBackend 默认 / FakeBackend CI 用） |
+| **UIMap** | 界面探索产出（Screen 集合 + Edge 边缘，M2） |
+| **BBox** | 归一化边界框 [0,1]（x,y,w,h，基准=screenshot 尺寸） |
+| **PerceptionEngine** | 多层界面识别（OCR + 图像匹配 + LLM 识图，漏斗） |
+| **TestReporter** | 报告器抽象（Json/Html/Multi 已实现，Protocol） |
 | **MultiReporter** | 多 reporter 组合器（事件广播 + 错误隔离） |
-| **LazyState** | 按需解析的游戏状态代理 |
-| **Investigator** | 独立验证者（不信任 subject agent 自报告） |
-| **Judge** | 综合判断者（Meta-CoT + 规则校验） |
-| **GameState** | 游戏状态快照（L1 感知输出） |
-| **Plugin** | 游戏特化扩展（数据/规则/工具/Reporter） |
+| **LazyState** | 按需解析的游戏状态代理（texts + find_text） |
+| **Investigator** | 独立验证者（规划中，完整三层引擎） |
+| **Judge** | 综合判断者（规划中=Meta-CoT；当前由 ReflectStage 轻量替代） |
+| **GameState** | 游戏状态快照（完整版 L1 感知输出，规划中） |
+| **Plugin** | 游戏特化扩展（数据/规则/工具/Reporter，Protocol） |
 | **Session** | 一次 charter 执行的会话 |
 | **Spec** | Pydantic 校验的测试数据（参数化测试输入） |
 | **Allure** | 默认 Reporter 实现之一（工业标准 Web 报告） |
+
+---
+
+## 11. 命名与目录设计原则
+
+> v0.5 新增（2026-07-06）。v0.6 扩展（2026-07-07）：补全 docstring/类型/import/错误处理/日志/测试六节。
+> 全仓统一的编码规范，后续所有模块必须遵守。
+
+### 11.1 目录组织
+
+**有抽象的包**（如 `llm/`、`executor/`）按此结构组织：
+
+```
+<package>/
+├── __init__.py        # 导出对外 API（用 __all__）
+├── base.py            # 协议/接口（Protocol 或 ABC）
+├── <utils>.py         # 跨实现共享的公共工具（无 _ 前缀）
+└── <impl>/            # 每个实现一个子文件夹
+    ├── __init__.py
+    └── ...
+```
+
+- **包根放协议 + 公共工具**：`base.py` 是接口契约，公共工具是所有实现共享的
+- **每个实现进自己的子文件夹**：即使当前单文件也用文件夹（为实现的内部扩展留空间，避免后期扁平→嵌套重构）
+- 子文件夹内部可有私有模块（`_` 前缀），只给该实现用
+
+**数据驱动的包**（如 `prompts/` 的 constants/data/templates 是内容分类，不是实现）**不套用**此原则。
+
+### 11.2 命名规则
+
+| 对象 | 规则 | 示例 |
+|---|---|---|
+| 类 | PascalCase | `ExecutorBackend` |
+| 协议/接口 | 名词，**无 `I` 前缀**（Python 风格，不学 Java） | `ExecutorBackend`（非 `IExecutorBackend`） |
+| 函数/变量/方法 | snake_case | `click_text` |
+| 常量 | UPPER_SNAKE_CASE | `DEFAULT_PERSONAS` |
+| 模块/文件 | snake_case，**默认无前缀** | `coords.py` |
+| 私有成员/私有模块 | `_` 前缀 | `_resolve_default_provider` |
+
+### 11.3 `_` 前缀的边界（判断标准）
+
+**唯一判断标准：包外会不会直接 import？**
+
+- ✅ 会 → 公共（**无前缀**）：跨实现共享的工具、对外 API
+- ❌ 不会 → 私有（`_` 前缀）：类的私有方法、某个实现内部的辅助模块、模块内辅助函数
+
+**常见误用**（禁止）：用 `_` 表达"我觉得它不重要"。`_` 是访问控制信号，不是重要性标记。
+
+### 11.4 `__init__.py` 导出规则
+
+- 每个包的 `__init__.py` 用 `__all__` 显式声明对外 API
+- `_` 前缀的不导出
+- 子包的 `__init__.py` 导出该子包的主类
+
+### 11.5 docstring 风格
+
+**文档化现有惯例**（全仓一致用 Google 风格，本节定为强制标准）。
+
+- **模块级 docstring**：每个 `.py` 必须有，说明职责 + 设计要点。私有模块也要有（说明私有原因）
+- **类 / 公共函数 / 公共方法**：必须有 docstring，用 **Google 风格**分段（`Args:` / `Returns:` / `Raises:`）
+- **私有成员**（`_` 前缀）：可简化为一句话说明意图，不强制分段
+- **语言**：中文（含中文标点），标识符在 docstring 里原样保留英文（如 `"""simple_converse 发一次对话..."""`）
+- **移植代码**（`_aircv/`）：保留原 docstring 标注"抄自 ... 1.4.3，去耦版"
+- **标杆实例**：`executor/base.py`、`executor/coords.py`、`perception/matching/image_matcher.py`
+
+### 11.6 类型注解
+
+**明确现有非 strict 配置下的分级要求**。
+
+- **公共 API 必须标注**：协议（Protocol）、对外类（含 `__init__` 参数）、对外函数，类型注解不可省
+- **私有辅助函数鼓励标注**，但不强制（mypy 非 strict，本地辅助函数可省略）
+- **标准头**：每个 `.py` 顶部 `from __future__ import annotations`（已有 ~70% 文件使用，定为标准）
+- **重依赖延迟**：numpy/cv2/airtest 等重栈用 `TYPE_CHECKING` 延迟导入 + 字符串别名（如 `NDArray = "numpy.ndarray"`，避免模块加载时拉起重栈）
+- **mypy 配置**：`python_version = "3.12"`（对齐 venv 实际版本，numpy 2.x stub 需要）、`strict = false`、`ignore_missing_imports = true`（对 airtest/poco 等无 stub 库放行）
+
+### 11.7 import 规范
+
+**补全 ruff `I` 规则集的细节约定**。
+
+- **分组顺序**（ruff isort 默认强制）：
+  1. `from __future__ import annotations`（独占一组）
+  2. 标准库（`os` / `sys` / `pathlib` ...）
+  3. 第三方（`pydantic` / `cv2` / `numpy` / `pytest` ...）
+  4. 本项目（`from joker_test.xxx import ...`）
+  5. 同包相对（`from .xxx import ...`）
+- 每组之间空一行，组内字母序
+- **重依赖懒导入**：`cv2` / `numpy` / `airtest` / `rapidocr` 等在函数内 `import`（`# noqa: PLC0415`），避免模块加载时拉起重栈。顶层 `import cv2` 只在确实需要类型别名的 `TYPE_CHECKING` 块里
+- **禁止 `from x import *`**：全仓零使用，定为禁令。所有跨包依赖必须具名 import
+
+### 11.8 错误处理
+
+**填补缺口，统一异常约定**。
+
+- **异常命名**：自定义异常类用 `Error` 后缀（`QualityError`、`TemplateInputError`），继承 `Exception`（不继承 `BaseException`）
+- **禁止裸 `except:`**：必须 `except SpecificError`，或至少 `except Exception`（明确不捕 `KeyboardInterrupt`/`SystemExit`）
+- **跨层降级**：跨抽象层时用异常隔离 + 降级（`PerceptionEngine` / `ImageMatcher` 已示范：单算法失败降级到下一个，不让一个 provider 的异常炸掉整条链）
+- **资源清理**：`connect`/`close`、文件句柄、临时目录等用 `with` 或 `try-finally`（如 `backend` fixture 的 `yield` + `close()`）
+
+### 11.9 日志
+
+**文档化现有惯例，统一 logger 使用**。
+
+- **logger 命名**：每个 `.py` 顶部 `_LOGGER = logging.getLogger(__name__)`（`_` 前缀 = 私有常量）
+- **级别约定**：
+  - `DEBUG`：详细匹配过程、内部状态变化（如模板匹配的 confidence）
+  - `INFO`：关键流程节点（如"开始探索"、"生成 N 个测试"）
+  - `WARNING`：可恢复异常、降级（如"模板加载失败，跳过"、"算法异常降级"）
+  - `ERROR`：不可恢复错误（如连接失败、关键资源缺失）
+- **不在模块顶层配置 `basicConfig`**：日志配置由 CLI / 入口统一负责（避免多模块互相覆盖配置）
+- **用户面向的进度**用 `print`，不用 logging（logging 给开发者排查用，print 给终端用户看进度）
+
+**端到端流程跟踪（Tracer）**：logging 是运行时日志，Tracer（`src/joker_test/trace.py`）是**流程跟踪器**，记录 LLM 调用、阶段耗时、事件流，用于诊断问题和持续优化流程。
+
+**全局模式（仿 `logging`，业务代码零参数零感知）**：
+- **惰性初始化**：首次 `trace_event(...)` / `trace_stage(...)` 调用时惰性创建默认 `Tracer`，不用 `set_tracer`
+- **atexit 自动收尾**：进程退出时自动写 `trace.html` + `events.jsonl` + `summary.json`（`_auto_finalize` 幂等，不抛异常）
+- **默认开启**：CLI 入口默认什么都不写；`--no-trace` 才主动 `set_tracer(None)` → `_NoOpTracer` 全空操作
+- **模块级函数**：业务代码直接调 `trace_event` / `trace_stage` / `trace_llm` / `trace_error` / `trace_finalize`，不 import `get_tracer`，不传参
+- **TracingProvider**：包装真实 LLM provider，自动记录所有 LLM 调用（prompt/reply/耗时）到全局 tracer（见 `llm/providers/tracing.py`）。调用方 `TracingProvider(real, model)`，不传 tracer
+
+调用方对比：
+- **默认**：什么都不用写，进程结束自动产 `traces/<时间戳>_run/`
+- **关闭**：`set_tracer(None)` 一行
+- **想拿 summary print**：可选显式调 `trace_finalize()`（不调也不影响产物）
+
+**产物结构**（一次运行一个目录，时间戳在前可排序）：`traces/<日期>_<时分>_<name>/{trace.html, events.jsonl, summary.json}`
+- **trace.html**：单文件自包含，人看。摘要时间线 + LLM 折叠卡片（**完整 prompt/reply 内联**，不再产散文件）。浏览器直接打开，复制一个文件即可分享
+- **events.jsonl**：机器读（事件流，每行一个 JSON，`grep`/`jq` 友好）。注意后缀是 `.jsonl`（JSON Lines，逐行处理），非 `.json`（整个文件一个数组）
+- **summary.json**：数字摘要（耗时/事件数/LLM 调用数/错误数），CI 判断用
+- **自动清理**：`Tracer(keep=20)`（默认）保留最近 20 次，超出删最旧的（只删符合 `<日期>_<时分>_<name>/` 命名格式的目录，防误删非 trace 目录）。`keep=0` 永不清理（归档重要 run）。手动清理：`python -m joker_test.trace clean --keep N`
+
+**打点覆盖**（pipeline/各模块自动插桩，签名不动）：
+- `explorer/llm_explorer.py`：`explore()` 每步决策（`explore_step` / `action_result` / `explore_end`）
+- `flow/generator.py`：生成全过程（`semanticized` / `code_parsed` / `quality_ok` / `rewritten`）
+- `flow/verifier.py`：试跑回喂每轮（`verify_round` / `verify_pass` / `verify_exhausted`）
+
+**漏用检测**：`trace_stage` 是 `@contextmanager`，如果漏了 `with`（生成器被 GC 回收触发 `GeneratorExit`），`stage_end` 事件带 `clean_exit=False` 并打 warning（让漏用从静默变可见）。
+
+### 11.10 测试规范
+
+**填补缺口，对齐 pyproject 配置与现有测试组织**。
+
+- **文件命名**：
+  - 根级 CI 测试：`test_<被测模块>.py`（如 `test_backends_fake.py`、`test_image_matcher.py`）
+  - 真机测试：`test_<被测模块>_real.py`，放 `tests/real/`（需真游戏/真 LLM，CI 跳过）
+- **函数命名**：`test_<被测行为>`（如 `test_match_best_hit`、`test_click_text_miss`），一个函数只测一件事
+- **pytest 不收集 `Test*` 类**（`python_classes = []`）：因为 `reporters` 的 `TestCase`/`TestResult` 等是数据模型。数据模型类必须加 `__test__ = False` 显式标记（见 `MatchResult`、`PerceptionResult`）
+- **CI 友好原则**：测试不依赖真游戏/真 LLM。用 `FakeBackend` + `MockProvider` 跑通逻辑；真机测试用 `pytestmark = pytest.mark.skipif(...)` 按环境变量（`JOKER_BACKEND`）跳过
+- **fixture scope**：`backend` 用 `session` scope（真游戏连接慢，整个会话共享一个实例）；测试间状态隔离靠每个测试 `wait_until` 自包含导航，不靠重新连接
+- **`--strict-markers` 已开**：新增 marker 必须在 `conftest.py` 的 `pytest_configure` 注册
 
 ---
 
@@ -1215,6 +788,11 @@ class Attachment:
 | v0.2 | 2026-06-26 | 修订 ADR-002（ExecutorBackend 抽象）；4.2 节加入执行模式说明；追加 ADR-008/009 | — |
 | v0.3 | 2026-06-26 | **撤销 DSL 设计**：ADR-001 改为 Python+pytest+Backend；ADR-008 改为 Python 模块 + Pydantic spec；ADR-009 撤销 | — |
 | v0.4 | 2026-06-26 | **整体审阅清理**：① 清除所有 DSL 残留（2.1/2.2/3.1/3.2/4.5/4.6）② 新增 4.7 测试可视化（Reporter 插件化）③ 新增 ADR-009（TestReporter 抽象）+ ADR-010（插件提供 Reporter）④ 4.5 插件去掉 Action 扩展，加 Reporter 扩展 ⑤ 新增 5.5 Reporter 数据契约 ⑥ 阶段 2 加入 Reporter 任务 ⑦ 开放问题 Q3 删除（DSL 相关）⑧ 术语表补充 TestReporter/MultiReporter/Allure ⑨ 简化 ADR（去除冗余"撤销说明"） | — |
+| v0.5 | 2026-07-06 | **新增 §11 命名与目录设计原则**：固化全仓统一的编码规范（目录组织"包根放协议+公共工具、实现进子文件夹"；命名规则；`_` 前缀边界判断标准"包外是否 import"；`__init__.py` 导出规则）。来源：M1 方案讨论中暴露的 `_coords.py` 误用 + 目录结构不一致。 | M1 执行 |
+| v0.6 | 2026-07-07 | **§11 扩展为完整工程规范**：在 §11.1-11.4（命名/目录/私有/导出）基础上新增六节——§11.5 docstring（Google 风格，文档化现有惯例）+ §11.6 类型注解（非 strict 分级，`__future__` annotations 标准）+ §11.7 import（分组顺序 + 重依赖懒导入 + 禁 `import *`）+ §11.8 错误处理（异常 `Error` 后缀 + 跨层降级）+ §11.9 日志（`_LOGGER` 命名 + 级别约定）+ §11.10 测试规范（命名 + CI 友好 + marker）。配套修 4 处违规：`_load_env` 跨包私有导入改公开 `load_env`、`scr` 孤立缩写改 `screen`、`_AirtestState` 从 `__all__` 移除、pyproject 版本号差异加注释。同步 AGENTS.md 加工程规范速查（10 条一句话清单）。 | 工程规范整理 |
+| v0.7 | 2026-07-07 | **文档大幅精简（1384→约 760 行，省 45%）**：① §4 模块详解删全部过时伪代码（OpenCVBackend/7-hook Reporter/class GamePlugin 等，654→168 行），降级为"架构说明+代码指针"；② §7 落地路径整节删（已被 roadmap 取代，换成指针）；③ §5 删 §5.5（reporters/base.py 已实现）+ 压 §5.2/5.3/5.4；④ §6 订正 ADR-002（OpenCV→Airtest，R-ADR-5）+ ADR-006（MCP 包装→可选增强，R-ADR-8）；⑤ §3 重画架构图去 OpenCVBackend/三层/Investigator 过时部分；⑥ §8 风险状态更新（R5/R6/R8 已解决）；⑦ §9 术语表补 UIMap/BBox/PerceptionEngine + 去掉不存在的 OpenCVBackend/AllureReporter；⑧ 同步 AGENTS.md/CLAUDE.md 过时引用。 | 文档精简 |
+| v0.8 | 2026-07-09 | **Tracer 全局化 + CLI 补 record + click_coord 替代模板匹配**。① §11.9 Tracer 从"手动 TracingProvider 包装"改为"全局惰性模式"（仿 logging：模块级 `trace_event`/`trace_stage` 函数，业务代码零参数零感知，首次打点惰性建 Tracer，atexit 自动收尾，`--no-trace` 主动关闭）；补打点覆盖说明（explorer/generator/verifier 内部插桩）+ 漏用检测（GeneratorExit → clean_exit=False + warning）；补自动清理过滤（`_is_trace_dir` 正则只删 trace 目录防误删）。② §4.6 CLI 子命令补 `record`（6 个），补 `--no-trace` 说明。 | trace 全局化 |
+| v0.9 | 2026-07-09 | **探索流水线落地 + 删除战术库 + 全文审查**。① 新增 `pipeline/` 包：AgenticOrchestrator 薄编排 5 Stage（Explore 智能入口含固化命中检查+三模式探索 / Solidify 固化+试跑回喂 / Execute 脱离 LLM / Report 综合报告 / Reflect 可信度+风险），借 Open-AutoGLM 循环模式保留 LLM 克制红线（ADR-011）。② 删除 `orchestrator.py`（StaticOrchestrator）/`exploratory.py`/`tactics.py`，清理 reflection 的 BugReport 依赖。③ §4.6 CLI 新增 `explore` 子命令（7 个）+ `run-all` 改走 AgenticOrchestrator + 无参数默认 run-all。④ **全文系统性审查修正**：§2.1 测试分层图（"LLM+战术脚本"→"LLM 探索流水线"）；§2.2 LLM 克制表（L2/L3/战术脚本执行→探索决策/命中检查/反思/误报审查）；§3.2 数据流重画（旧线性 Charter→Bug → 双线冒烟+pipeline DAG）；§4.4 整节重写（Investigator/Judge/Bug 为主线 → ReflectStage 四项职责为主线，Investigator 降为规划态）；§4.7 Reporter 补 ExploreReporter + ADR-009 修订（Allure 非默认）；§5.3 BugReport Schema 重定位（明确当前不产 BugReport）；ADR-004 标注规划态；§9 术语表 Judge/Tactic/Investigator 更新。 | pipeline 落地 |
 
 <!-- 后续修改请按以下格式追加:
 | v0.X | YYYY-MM-DD | <改了什么,为什么> | <谁> |
@@ -1232,4 +810,4 @@ class Attachment:
 
 ---
 
-**文档结束** | v0.4 | 2026-06-26
+**文档结束** | v0.9 | 2026-07-09

@@ -1,0 +1,17 @@
+# Persona 库：5 种玩家人格。可在 game_metadata.json 的 personas 字段覆盖。
+# 每个 Persona 代表一种探索式测试的"玩家风格"。
+
+- name: 破坏狂
+  description: 尝试让游戏崩溃或进入未定义状态。偏好极端输入、非法操作、组合按键、边界操作。
+
+- name: 贪婪者
+  description: 尝试让数值越界（金币为负、物品堆叠超上限）。偏好重复操作、经济漏洞、刷分。
+
+- name: 急躁鬼
+  description: 跳过所有动画、过场、对话。偏好中途退出、断网重连、快速连点、UI 切换竞速。
+
+- name: 完美主义
+  description: 尝试不可能任务（10 级杀 boss、空手通关）。偏好极限玩法、最低数值通关。
+
+- name: 混乱中立
+  description: 做"不太对"的操作（卖任务道具、攻击 NPC、卡墙角）。偏好非常规路径、规则违反。

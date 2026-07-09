@@ -30,6 +30,9 @@ dependencies = [
     "tqdm>=4.66",
     "pillow>=10.0",
     "pydantic>=2.0",
+    # prompt 渲染层依赖（prompts/loader.py）
+    "Jinja2>=3.1",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +51,18 @@ opencv = [
 airtest = [
     "airtest>=1.3",
     "pocoui>=1.0",
+    # G5 footgun：airtest 的 cv2（opencv-contrib-python 4.6.0）基于 numpy 1.x ABI。
+    # 必须 pin numpy<2，否则装其他包时 numpy 被升到 2.x 会让 cv2 崩溃。
+    "numpy<2",
+    # 录制器依赖（pynput 全局监听人类操作，flow 包用）
+    "pynput>=1.7",
+]
+ocr = [
+    # OCR 引擎（默认 RapidOCR，onnxruntime 轻量，中文好）。
+    # 注意：rapidocr 会拉 numpy>=2，与 airtest 的 numpy<2 声明冲突。
+    # 实测 airtest 1.4.3 的 aircv 在 numpy 2.x 下可工作（matchTemplate/find_template 正常），
+    # 但这是脆弱状态——若 airtest 运行时崩，需独立 venv 隔离 ocr 与 airtest。
+    "rapidocr_onnxruntime>=1.4",
 ]
 report = [
     "allure-pytest>=2.13",
@@ -67,21 +82,27 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 joker_test = ["py.typed"]
+# prompts 层的配置文件必须随包分发（.md/.yaml/.md.j2）
+"joker_test.prompts" = ["constants/*.md", "data/*.yaml", "templates/*.md.j2", "templates/charter_schema.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+python_classes = []  # 不收集 Test* 类（reporters 的 TestCase/TestResult 等以 Test 开头但非测试）
 addopts = "-ra --strict-markers"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"  # 对齐 venv 实际版本（numpy 2.x stub 需要 3.12+）
 strict = false
 ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py310"  # 声明最低支持版本（与 requires-python 对齐）。mypy 用 3.12 是 venv 实际版本（numpy 2.x stub 需要），两者有意不同：ruff 守下限，mypy 守实际。
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E402"]  # 脚本刻意分步 import（配合分步打印）
