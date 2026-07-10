@@ -1,0 +1,141 @@
+你正在为游戏《{{ game_name }}》生成**冒烟测试用例**（pytest + Pydantic spec）。
+
+<state_map>
+{{ state_map_json }}
+</state_map>
+
+<game_meta>
+游戏概述：{{ game_overview }}
+{% if game_systems %}被测系统列表：
+{% for s in game_systems %}  - {{ s }}
+{% endfor %}{% endif %}
+</game_meta>
+
+<quality_rules>
+{{ quality_rules }}
+</quality_rules>
+
+<task>
+请基于上面的界面地图（StateMap），为被测系统生成冒烟测试用例。
+
+每份用例包含两个文件：
+1. **test_<system>.py**：pytest 测试函数，用 `backend` fixture 操作游戏并断言
+2. **<system>_spec.py**：Pydantic BaseModel 定义测试数据（参数化用）
+
+**关键规则（必须遵守，否则测试会失败）：**
+
+A. **测试独立性**：每个测试函数必须独立，不依赖前序测试的状态。如果测试中 click 了按钮改变了界面，
+   测试结束前必须回到原始界面（如 press_key("escape") 返回主菜单）。
+
+B. **click 会改变界面**：`backend.click_text("进入地牢")` 后游戏进入新界面，后续的 `backend.state.texts`
+   返回的是**新界面**的文本，不是原界面。断言必须匹配新界面的预期文本。
+
+C. **OCR 文本匹配要鲁棒**：OCR 可能不精确（如 "SHATTERED" 可能被识别为 "Shattered Pixel Dungeon" 整体）。
+   断言用 `any(keyword in t for t in backend.state.texts)` 而非精确 `in` 匹配。用关键词而非整句。
+
+D. **断言必须用 StateMap 真实文本**：上方 `<state_map>` 里的 `elements[].text` 是探索时 OCR 读到的**真实文本**。
+   断言和 `click_text` 的参数**必须从这些真实文本里取**，不要自己想象（如 StateMap 写"英雄 1"就别断言"战士"）。
+   `click_text` 的参数也必须是 StateMap 里出现过的文本，否则点击会失败（找不到）。
+
+E. **wait_until 等界面稳定**：click 后用 `backend.wait_until(lambda: 期望文本 in backend.state.texts, timeout=10.0)`
+   等界面切换完成，不要假设 click 立即生效。
+
+F. **wait_until 签名**：`wait_until(predicate, timeout)` —— 只有这两个参数，**不要加 error_msg 等不存在的参数**。
+
+G. **import 路径**：`backend` fixture 由 conftest 提供，不要 import。类型注解用 `from joker_test.executor.base import ExecutorBackend`。
+
+H. **只生成必要的测试**：2-3 个测试函数即可，聚焦核心冒烟场景（界面显示、按钮响应、导航返回）。
+</task>
+
+<examples>
+以下是两个**正确写法**的例子，请严格模仿其结构（wait_until 的用法、OCR 匹配方式、点击导航的完整闭环）。
+
+### 例子 1：只读断言型（只读屏幕，不改状态 —— 最安全）
+
+### test_menu_display.py
+```python
+"""主菜单显示测试（只读断言，不点击任何按钮）。"""
+from __future__ import annotations
+
+from joker_test.executor.base import ExecutorBackend
+
+
+def test_menu_has_title(backend: ExecutorBackend) -> None:
+    """主菜单应显示游戏标题。"""
+    backend.wait_until(
+        lambda: any("标题" in t or "TITLE" in t for t in backend.state.texts),
+        timeout=10.0,
+    )
+    texts = backend.state.texts
+    assert any("标题" in t or "TITLE" in t for t in texts), \
+        f"未找到游戏标题，实际: {texts}"
+
+
+def test_menu_has_start_button(backend: ExecutorBackend) -> None:
+    """主菜单应有'开始游戏'按钮（OCR 用关键词模糊匹配，不用整句精确匹配）。"""
+    backend.wait_until(
+        lambda: any("开始" in t for t in backend.state.texts),
+        timeout=10.0,
+    )
+    texts = backend.state.texts
+    assert any("开始" in t for t in texts), f"未找到开始按钮，实际: {texts}"
+```
+
+### 例子 2：点击导航型（click 改变界面 → 等切换 → 断言新界面 → 返回原界面）
+
+这是**最容易写错**的场景。必须遵循"点击 → wait_until 等新界面 → 断言 → 返回原界面"的完整闭环，
+否则会污染后续测试。下面示范点击"设置"打开设置面板，断言看到设置项，再按 ESC 返回主菜单。
+
+### test_settings_navigation.py
+```python
+"""设置界面导航测试（点击 → 等切换 → 断言 → 返回，完整闭环）。"""
+from __future__ import annotations
+
+from joker_test.executor.base import ExecutorBackend
+
+
+def test_open_settings_and_return(backend: ExecutorBackend) -> None:
+    """点击'设置'应进入设置界面，看到设置项后按 ESC 返回主菜单。"""
+    # 1. 先等主菜单就绪（确保'设置'按钮可点）
+    backend.wait_until(
+        lambda: any("设置" in t for t in backend.state.texts),
+        timeout=10.0,
+    )
+
+    # 2. 点击'设置'进入设置界面
+    clicked = backend.click_text("设置")
+    assert clicked, "未找到'设置'按钮"
+
+    # 3. wait_until 等设置界面出现（不要假设 click 立即生效！）
+    backend.wait_until(
+        lambda: any("音量" in t or "画质" in t for t in backend.state.texts),
+        timeout=10.0,
+    )
+    texts = backend.state.texts
+    assert any("音量" in t or "画质" in t for t in texts), \
+        f"点击设置后未进入设置界面，实际: {texts}"
+
+    # 4. 返回原界面（press_key escape），避免污染后续测试
+    backend.press_key("escape")
+    backend.wait_until(
+        lambda: any("设置" in t for t in backend.state.texts),
+        timeout=10.0,
+    )
+```
+</examples>
+
+<output_format>
+请严格按以下格式输出（用 ```python 代码块，文件名在代码块前一行用 `### filename` 标注）：
+
+### test_<system>.py
+```python
+（完整代码）
+```
+
+### <system>_spec.py
+```python
+（完整代码）
+```
+
+不要输出其他内容。
+</output_format>

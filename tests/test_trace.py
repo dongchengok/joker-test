@@ -250,48 +250,62 @@ def test_tracing_provider_no_trace_when_disabled() -> None:
 
 
 def test_explorer_auto_traces(tmp_path: Path) -> None:
-    """LLMExplorer.explore 后 events.jsonl 含 explore_step/action_result/explore_end。"""
+    """LLMExplorer.explore 后 events.jsonl 含 explore_think。"""
     import json  # noqa: PLC0415
 
     import numpy as np  # noqa: PLC0415
 
     from joker_test.executor.backends.fake import FakeBackend, ScreenCfg  # noqa: PLC0415
-    from joker_test.executor.base import BBox  # noqa: PLC0415
     from joker_test.explorer.llm_explorer import LLMExplorer  # noqa: PLC0415
+    from joker_test.explorer.strategy import StepDecision  # noqa: PLC0415
+    from joker_test.explorer.types import Screen  # noqa: PLC0415
 
     _reset_global_tracer()
     t = trace_mod.Tracer(tmp_path / "traces", name="ex", auto_timestamp=False)
     trace_mod.set_tracer(t)
 
-    # FakeBackend：主菜单 → 角色（点"进入"切屏）
     backend = FakeBackend(
-        screens={
-            "main": ScreenCfg(texts_map={"进入": BBox(0.5, 0.5, 0.2, 0.1)}, bg_pixel=(10, 20, 30)),
-            "char": ScreenCfg(texts_map={"返回": BBox(0.5, 0.5, 0.2, 0.1)}, bg_pixel=(40, 60, 80)),
-        },
-        transitions={("main", "进入"): "char", ("char", "返回"): "main"},
-        initial_screen="main",
+        screens={"root": ScreenCfg()},
+        initial_screen="root",
     )
-    # mock LLM：第一次理解界面，决策点"进入"；第二次理解新界面，决策 stop
-    llm = MagicMock()
-    llm.simple_converse.side_effect = [
-        {"content": [{"type": "text", "text": '{"screen_name": "主菜单", "elements": [{"text": "进入", "type": "button", "bbox": [0.4,0.4,0.2,0.2]}]}'}]},
-        {"content": [{"type": "text", "text": '{"action": "click_text", "target": "进入", "description": "点进入"}'}]},
-        {"content": [{"type": "text", "text": '{"screen_name": "角色", "elements": [{"text": "返回", "type": "button", "bbox": [0.4,0.4,0.2,0.2]}]}'}]},
-        {"content": [{"type": "text", "text": '{"action": "stop", "target": "", "description": "完成"}'}]},
-    ]
-    # FakeBackend.screenshot 返回一个固定帧（pixel_diff_ratio 检测用）
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
     backend.screenshot = MagicMock(return_value=frame)
 
-    explorer = LLMExplorer(backend=backend, llm=llm, max_steps=3, max_stale_steps=3)
+    class _MockStrategy:
+        def __init__(self) -> None:
+            self._idx = 0
+            self._screens = [Screen(id="root", name="根", elements=[], fingerprint="fp")]
+
+        def decide(self, screenshot, perception, ctx) -> StepDecision:
+            self._idx += 1
+            if self._idx <= 1:
+                return StepDecision(think="step1", action="press_key", description="escape")
+            return StepDecision(think="done", action="stop", stop=True)
+
+        def on_action_executed(self, decision, result) -> None:
+            pass
+
+        def should_stop(self) -> bool:
+            return self._idx >= 1
+
+        def get_state_map(self):
+            from joker_test.explorer.types import StateMap  # noqa: PLC0415
+
+            return StateMap(
+                screens=self._screens,
+                root_screen_id="root",
+                explored_at="2026-01-01T00:00:00Z",
+            )
+
+    explorer = LLMExplorer(
+        backend=backend, llm=MagicMock(), strategy=_MockStrategy(), max_steps=5
+    )
     explorer.explore()
 
     trace_mod.trace_finalize()
     lines = (tmp_path / "traces" / "ex" / "events.jsonl").read_text(encoding="utf-8").strip().split("\n")
     types = {json.loads(ln)["type"] for ln in lines}
-    assert "explore_step" in types
-    assert "explore_end" in types
+    assert "explore_think" in types
     _reset_global_tracer()
 
 

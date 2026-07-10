@@ -1,0 +1,39 @@
+今天是 {{ today }}。
+
+你正在为游戏《{{ game_name }}》生成"探索式测试章程"（Charter）。
+
+<context>
+{{ game_overview }}
+
+默认加载存档：{{ load_save }}
+</context>
+
+<targets>
+{{ targets_json }}
+</targets>
+
+<personas>
+{% for p in personas %}
+  - {{ p.name }}：{{ p.description }}
+{% endfor %}
+</personas>
+
+<heuristics>
+{% for h in heuristics %}
+  - {{ h }}
+{% endfor %}
+</heuristics>
+
+<bug_definition>
+{{ bug_definition }}
+</bug_definition>
+
+<task>
+请为每个 (系统 × Persona) 组合生成一个独立的 Charter。
+
+每个 Charter 必须满足以下质量要求：
+a) **目标具体、可观察、可判断 bug** —— 不要写"测试强化系统"，要写"测试+10 满级武器的强化边界"
+b) **Persona 风格明显** —— 不同 Persona 对同一系统的探索方向应该显著不同。破坏狂 vs 贪婪者测同一个铁匠铺，目标完全不同
+c) **启发式具体到操作层面** —— 不要写"测试边界"，要写"连续点击强化 10 次直到金币耗尽"
+d) **expected_behaviors 是"正常情况下的合理预期"** —— 作为异常的对照基线，不是"理想完美行为"
+</task>

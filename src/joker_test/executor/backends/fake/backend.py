@@ -110,6 +110,8 @@ class FakeBackend:
         self.click_history: list[tuple[str, Any]] = []
         self.key_history: list[str] = []
         self.type_history: list[str] = []
+        self.swipe_history: list[tuple[str, tuple[float, float, float, float, float]]] = []
+        self.long_press_history: list[tuple[str, tuple[float, float, float]]] = []
 
     def _apply_screen(self, screen_id: str) -> None:
         """切换当前屏幕：更新 texts_map 和 bg_pixel（多屏模式）。"""
@@ -176,6 +178,14 @@ class FakeBackend:
 
     def type_text(self, text: str) -> None:
         self.type_history.append(text)
+
+    def swipe(self, x1: float, y1: float, x2: float, y2: float, duration: float = 0.5) -> None:
+        self.swipe_history.append(("swipe", (x1, y1, x2, y2, duration)))
+        direction = "swipe_up" if y2 < y1 else "swipe_down"
+        self._maybe_transition(direction)
+
+    def long_press(self, x: float, y: float, duration: float = 2.0) -> None:
+        self.long_press_history.append(("long_press", (x, y, duration)))
 
     def _maybe_transition(self, action_key: str) -> None:
         """多屏模式：查 transitions，命中则切屏（单屏模式无操作）。"""

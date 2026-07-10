@@ -59,6 +59,12 @@ def main(argv: list[str] | None = None) -> int:
     p_exp.add_argument("--game", default="")
     p_exp.add_argument("--backend", default="fake", choices=["airtest", "fake"])
     p_exp.add_argument("--max-steps", type=int, default=30)
+    p_exp.add_argument(
+        "--strategy",
+        choices=["react_state", "conversation"],
+        default="conversation",
+        help="探索策略（conversation=对齐Open-AutoGLM默认 / react_state=ReAct+状态机固定token）",
+    )
     p_exp.add_argument("--no-trace", action="store_true")
 
     # explore-ui
@@ -205,6 +211,7 @@ def _cmd_explore(args: argparse.Namespace) -> int:
         game_name=args.game,
         backend_name=args.backend,
         max_explore_steps=args.max_steps,
+        explore_strategy=args.strategy,
     )
     orch = build_orchestrator(cfg)
     result = orch.run(cfg)

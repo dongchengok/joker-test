@@ -27,6 +27,7 @@ class ExploreConfig(BaseModel):
     backend_name: str = "fake"
     max_explore_steps: int = 30
     verify_during_solidify: bool = True
+    explore_strategy: Literal["react_state", "conversation"] = "conversation"
 
 
 class ExploreResult(BaseModel):

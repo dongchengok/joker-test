@@ -613,8 +613,11 @@ TestReporter 协议（5 个 hook）见同文件。
 | **Coverage Map** | 覆盖度地图（4 维：区域/功能/操作/状态） |
 | **Tactic** | 战术脚本（已废弃，探索改走 pipeline 三模式） |
 | **Stage** | 流水线阶段（Explore/Solidify/Execute/Report/Reflect，状态自洽） |
+| **ExploreStrategy** | 探索策略协议（可替换：ReactStateStrategy 默认 / ConversationStrategy 对比） |
+| **ReactStateStrategy** | ReAct 思维链 + 状态机驱动（固定 token，默认策略） |
+| **ConversationStrategy** | conversation context 策略（对齐 Open-AutoGLM，对比基准） |
 | **ExecutorBackend** | 执行后端抽象（AirtestBackend 默认 / FakeBackend CI 用） |
-| **UIMap** | 界面探索产出（Screen 集合 + Edge 边缘，M2） |
+| **StateMap** | 探索状态地图（Screen 集合 + Exit 边，原 UIMap） |
 | **BBox** | 归一化边界框 [0,1]（x,y,w,h，基准=screenshot 尺寸） |
 | **PerceptionEngine** | 多层界面识别（OCR + 图像匹配 + LLM 识图，漏斗） |
 | **TestReporter** | 报告器抽象（Json/Html/Multi 已实现，Protocol） |

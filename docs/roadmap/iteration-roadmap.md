@@ -76,7 +76,7 @@
 
 | 任务 | 说明 | 状态 |
 |---|---|---|
-| B1. LLMExplorer 探索深度 | 当前单步 1-2 次 LLM 调用，增强探索策略（目标引导、避免重复、回溯策略），提升 UIMap 覆盖度 | ⬜ |
+| B1. LLMExplorer 探索深度 | 重写 LLMExplorer 为策略外壳 + ExploreStrategy 协议（ReactStateStrategy 默认 ReAct+状态机 / ConversationStrategy 对齐 Open-AutoGLM）。目标驱动(intent) + 路径回溯 + 动作空间扩展(swipe/long_press) + StateMap 改名。196 测试全绿。 | ✅ |
 | B2. 固化质量提升 | RecordedFlowGenerator 的语义化准确度（OCR 匹配阈值调优）+ 试跑回喂闭环（TestCaseVerifier 接入 CLI） | ⬜ |
 | B3. 反思维度扩展 | ReflectStage 加入覆盖度评估（UIMap 已探索界面/元素占比）、断言强度分析（值断言>存在性>无断言） | ⬜ |
 | B4. ExploreReporter Html 可视化 | 当前只输出 Json，补 Html（探索轨迹时间线 + 阶段覆盖 + 风险列表） | ⬜ |

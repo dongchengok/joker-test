@@ -49,7 +49,7 @@ clips/
 # 探索流水线产物
 flows/
 traces/
-templates/
+/templates/
 
 # 被测游戏二进制与截图（不入库）
 .test-targets/

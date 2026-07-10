@@ -1,0 +1,122 @@
+你正在为游戏《{{ game_name }}》生成**冒烟测试用例**（pytest）。
+
+以下是我录制的操作流程（手动操作游戏时录下来的），每一步已经做了**坐标语义化**
+（把原始坐标转换成了稳定的 click_text/click_image 定位）。请理解这些操作的目的，
+生成 pytest 测试函数。
+
+<recorded_flow>
+{{ flow_json }}
+</recorded_flow>
+
+<game_meta>
+游戏概述：{{ game_overview }}
+{% if game_systems %}被测系统列表：
+{% for s in game_systems %}  - {{ s }}
+{% endfor %}{% endif %}
+</game_meta>
+
+{% if warnings %}
+<warnings>
+{% for w in warnings %}  - {{ w }}
+{% endfor %}（冲突项已保留两种定位，请根据截图判断用哪个）
+</warnings>
+{% endif %}
+
+<quality_rules>
+{{ quality_rules }}
+</quality_rules>
+
+<task>
+请基于上面的录制操作流，生成 pytest 冒烟测试用例。
+
+**关键规则（必须遵守，否则测试会失败）：**
+
+A. **测试独立性**：每个测试函数必须独立，不依赖前序测试的状态。如果测试中 click 了按钮改变了界面，
+   测试结束前必须回到原始界面（如 press_key("escape") 返回主菜单）。
+
+B. **click 会改变界面**：`backend.click_text("进入地牢")` 后游戏进入新界面，后续的 `backend.state.texts`
+   返回的是**新界面**的文本，不是原界面。断言必须匹配新界面的预期文本。
+
+C. **OCR 文本匹配要鲁棒**：OCR 可能不精确。断言用 `any(keyword in t for t in backend.state.texts)`
+   而非精确匹配。用关键词而非整句。
+
+D. **必须原样使用 locator 字段的定位方式**：操作流里每个步骤的 `locator` 字段已经标注了该用
+   click_text 还是 click_coord，以及**精确的参数值**。
+   **严禁自己编造文字或坐标！必须原样复制 locator 里的值。**
+   - locator = `click_text("进入地牢")` → 代码写 `backend.click_text("进入地牢")`
+   - locator = `click_coord(0.150, 0.350)` → 代码写 `backend.click(0.150, 0.350)`
+     （click_coord 是纯图标界面的归一化坐标点击，ExecutorBackend.click 接收 x,y ∈ [0,1]）
+   - 如果步骤没有 locator 字段（press_key/type_text），按原 action 生成。
+
+D2. **断言必须用真实 OCR 数据，不准猜**：每个步骤的 `ocr_before` 和 `ocr_after` 字段是
+    探索时 OCR **实际读到的真实文本**。断言的关键词**必须从这些真实文本里取**。
+    - 例如 `ocr_after` = `["Shattered Pixel Dungeon", "选择一位英雄"]`
+      → 断言只能写 `assert any("英雄" in t or "选择" in t for t in texts)`
+    - **绝对不准**用你自己看图想象的关键词（如"战士"、"角色名"等 OCR 没读到的）
+    - `click_text` 的参数也必须从 `ocr_before` 或 `ocr_after` 里取真实文本
+
+E. **wait_until 等界面稳定**：click 后用 `backend.wait_until(lambda: 期望文本 in backend.state.texts, timeout=10.0)`
+   等界面切换完成，不要假设 click 立即生效。
+
+F. **wait_until 签名**：`wait_until(predicate, timeout)` —— 只有这两个参数，不要加 error_msg 等不存在的参数。
+
+G. **import 路径**：`backend` fixture 由 conftest 提供，不要 import。类型注解用 `from joker_test.executor.base import ExecutorBackend`。
+
+H. **只生成必要的测试**：2-4 个测试函数即可，聚焦录制操作的核心场景。
+</task>
+
+<examples>
+以下是正确写法的例子，请严格模仿其结构：
+
+### test_recorded_flow.py
+```python
+"""录制流程转测试（基于语义化定位）。"""
+from __future__ import annotations
+
+from joker_test.executor.base import ExecutorBackend
+
+
+def test_navigate_and_return(backend: ExecutorBackend) -> None:
+    """点击目标按钮应进入新界面，验证后返回。"""
+    # 1. 等起始界面就绪
+    backend.wait_until(
+        lambda: any("进入" in t for t in backend.state.texts),
+        timeout=15.0,
+    )
+
+    # 2. 点击按钮（用录制的语义化定位）
+    clicked = backend.click_text("进入地牢")
+    assert clicked, "未找到'进入地牢'按钮"
+
+    # 3. wait_until 等新界面出现
+    backend.wait_until(
+        lambda: any("英雄" in t for t in backend.state.texts),
+        timeout=10.0,
+    )
+    texts = backend.state.texts
+    assert any("英雄" in t for t in texts), f"未进入预期界面，实际: {texts}"
+
+    # 4. 返回原界面
+    backend.press_key("escape")
+    backend.wait_until(
+        lambda: any("进入" in t for t in backend.state.texts),
+        timeout=10.0,
+    )
+```
+</examples>
+
+<output_format>
+请严格按以下格式输出（用 ```python 代码块，文件名在代码块前一行用 `### filename` 标注）：
+
+### test_<system>.py
+```python
+（完整代码）
+```
+
+### <system>_spec.py
+```python
+（完整代码）
+```
+
+不要输出其他内容。
+</output_format>

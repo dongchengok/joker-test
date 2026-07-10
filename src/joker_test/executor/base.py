@@ -110,6 +110,14 @@ class ExecutorBackend(Protocol):
         """输入文本（到当前焦点输入框）。M1 的 AirtestBackend 留 NotImplementedError。"""
         ...
 
+    def swipe(self, x1: float, y1: float, x2: float, y2: float, duration: float = 0.5) -> None:
+        """滑动（归一化坐标 [0,1]）。"""
+        ...
+
+    def long_press(self, x: float, y: float, duration: float = 2.0) -> None:
+        """长按（归一化坐标 [0,1]）。"""
+        ...
+
     # ===== 同步 =====
 
     def wait_until(self, predicate: Callable[[], bool], timeout: float = 10.0) -> bool:

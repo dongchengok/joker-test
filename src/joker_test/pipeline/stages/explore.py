@@ -186,9 +186,23 @@ class ExploreStage:
             output_dir=self._flow_dir, backend=self._backend, pynput_mode=False
         )
         recorder.start()
+
+        from joker_test.explorer.conversation_strategy import ConversationStrategy  # noqa: PLC0415
+        from joker_test.explorer.react_strategy import ReactStateStrategy  # noqa: PLC0415
+
+        if config.explore_strategy == "conversation":
+            strategy = ConversationStrategy(
+                llm=self._provider, intent=config.intent
+            )
+        else:
+            strategy = ReactStateStrategy(
+                llm=self._provider, intent=config.intent
+            )
+
         explorer = LLMExplorer(
             self._backend,
             self._provider,
+            strategy=strategy,
             max_steps=config.max_explore_steps,
             recorder=recorder,
         )
@@ -196,7 +210,9 @@ class ExploreStage:
         flow = recorder.stop()
         if flow.steps:
             recorder.save_flow_yaml(flow)
-        log.append(f"llm 探索 {len(state_map.screens)} 屏")
+        log.append(
+            f"llm 探索 {len(state_map.screens)} 屏（{config.explore_strategy}）"
+        )
         return flow if flow.steps else None, state_map
 
 

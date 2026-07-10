@@ -178,6 +178,18 @@ class AirtestBackend:
 
         air_text(text, enter=False)
 
+    def swipe(self, x1: float, y1: float, x2: float, y2: float, duration: float = 0.5) -> None:
+        """滑动（归一化坐标 [0,1]）。"""
+        from airtest.core.api import swipe  # noqa: PLC0415
+
+        swipe((x1, y1), (x2, y2), duration=duration)
+
+    def long_press(self, x: float, y: float, duration: float = 2.0) -> None:
+        """长按（归一化坐标 [0,1]）。"""
+        from airtest.core.api import long_click  # noqa: PLC0415
+
+        long_click(x, y, duration=duration)
+
     # ===== 同步 =====
 
     def wait_until(self, predicate: Callable[[], bool], timeout: float = 10.0) -> bool:
