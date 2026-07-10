@@ -1,6 +1,6 @@
-"""UIExplorer —— 界面探索器核心（DFS 遍历游戏界面，产出 UIMap）。
+"""UIExplorer —— 界面探索器核心（DFS 遍历游戏界面，产出 StateMap）。
 
-M2 的主体（roadmap：对应用户阶段1前半）。自动遍历界面，产出结构化界面地图 JSON。
+M2 的主体（roadmap：对应用户阶段1前半）。自动遍历界面，产出结构化状态地图 JSON。
 是编排架构里"探查类命令"的核心（D10）——所有编排的第一步都是理解被测系统长什么样。
 
 算法：DFS + 回退（栈式深度优先）。
@@ -29,7 +29,7 @@ from joker_test.explorer.detection import (
     detect_elements,
     has_screen_changed,
 )
-from joker_test.explorer.types import Exit, Screen, UIMap
+from joker_test.explorer.types import Exit, Screen, StateMap
 
 if TYPE_CHECKING:
     from numpy import ndarray
@@ -45,7 +45,7 @@ _BACKTRACK_WAIT = 0.3
 
 
 class UIExplorer:
-    """界面探索器。DFS 遍历游戏界面，产出 UIMap。
+    """界面探索器。DFS 遍历游戏界面，产出 StateMap。
 
     Args:
         backend: 已配置好的 ExecutorBackend（如 FakeBackend 或 AirtestBackend）
@@ -55,8 +55,8 @@ class UIExplorer:
 
     用法::
         explorer = UIExplorer(backend=fb, max_depth=3)
-        uimap = explorer.explore()
-        print(uimap.model_dump_json())
+        state_map = explorer.explore()
+        print(state_map.model_dump_json())
     """
 
     def __init__(
@@ -78,8 +78,8 @@ class UIExplorer:
         self._fingerprint_to_id: dict[str, str] = {}  # 指纹 → screen_id（去重）
         self._screen_counter = 0
 
-    def explore(self) -> UIMap:
-        """执行 DFS 探索，返回完整界面地图。"""
+    def explore(self) -> StateMap:
+        """执行 DFS 探索，返回完整状态地图。"""
         self._backend.connect()
         try:
             # 捕获根界面
@@ -92,7 +92,7 @@ class UIExplorer:
             # DFS 探索
             self._dfs(root, depth=0)
 
-            return UIMap(
+            return StateMap(
                 screens=list(self._screens.values()),
                 root_screen_id=root.id,
                 explored_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),

@@ -56,8 +56,8 @@ class ReportStage:
                 "; ".join(explore.explore_log) or f"探索完成（{config.mode}）"
             ),
             flow_steps_count=len(explore.flow.steps) if explore.flow else 0,
-            uimap_screen_count=(
-                len(explore.uimap.screens) if explore.uimap else None
+            state_map_screen_count=(
+                len(explore.state_map.screens) if explore.state_map else None
             ),
             solidify_summary=(
                 f"固化 {len(solidify.test_paths)} 个测试" if solidify else None

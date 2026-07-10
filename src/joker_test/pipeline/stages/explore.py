@@ -1,8 +1,8 @@
 """探索阶段：智能入口（固化命中检查）+ 三模式探索。
 
 manual → GlobalRecorder(pynput)
-dfs    → UIExplorer（确定性，产 UIMap）
-llm    → LLMExplorer（agentic loop，产 UIMap + 操作轨迹）
+dfs    → UIExplorer（确定性，产 StateMap）
+llm    → LLMExplorer（agentic loop，产 StateMap + 操作轨迹）
 
 三种模式统一产 RecordedFlow，下游不区分来源。
 """
@@ -17,7 +17,7 @@ from typing import Any
 from joker_test.executor.base import ExecutorBackend
 from joker_test.explorer.explorer import UIExplorer
 from joker_test.explorer.llm_explorer import LLMExplorer
-from joker_test.explorer.types import UIMap
+from joker_test.explorer.types import StateMap
 from joker_test.flow.recorder import GlobalRecorder
 from joker_test.flow.types import RecordedFlow
 from joker_test.llm.base import LLMProvider
@@ -97,11 +97,11 @@ class ExploreStage:
             match_reason = "未命中已固化资产"
 
         # 3. 未命中 → 按 mode 探索
-        flow, uimap = self._explore(config, log)
+        flow, state_map = self._explore(config, log)
         return ExploreResult(
             flow=flow,
             flow_dir=str(self._flow_dir),
-            uimap=uimap,
+            state_map=state_map,
             match_reason=match_reason,
             explore_log=log,
         )
@@ -138,8 +138,8 @@ class ExploreStage:
 
     def _explore(
         self, config: ExploreConfig, log: list[str]
-    ) -> tuple[RecordedFlow | None, UIMap | None]:
-        """按 mode 探索，返回 (flow, uimap)。"""
+    ) -> tuple[RecordedFlow | None, StateMap | None]:
+        """按 mode 探索，返回 (flow, state_map)。"""
         if config.mode == "manual":
             return self._explore_manual(config, log), None
         if config.mode == "dfs":
@@ -160,8 +160,8 @@ class ExploreStage:
 
     def _explore_dfs(
         self, config: ExploreConfig, log: list[str]
-    ) -> tuple[RecordedFlow | None, UIMap]:
-        """UIExplorer 确定性 DFS，产 UIMap + 程序化录制。"""
+    ) -> tuple[RecordedFlow | None, StateMap]:
+        """UIExplorer 确定性 DFS，产 StateMap + 程序化录制。"""
         recorder = GlobalRecorder(
             output_dir=self._flow_dir, backend=self._backend, pynput_mode=False
         )
@@ -171,17 +171,17 @@ class ExploreStage:
             max_depth=min(config.max_explore_steps, 5),
             screen_change_timeout=1.0,
         )
-        uimap = explorer.explore()
+        state_map = explorer.explore()
         flow = recorder.stop()
         if flow.steps:
             recorder.save_flow_yaml(flow)
-        log.append(f"dfs 探索 {len(uimap.screens)} 屏")
-        return flow if flow.steps else None, uimap
+        log.append(f"dfs 探索 {len(state_map.screens)} 屏")
+        return flow if flow.steps else None, state_map
 
     def _explore_llm(
         self, config: ExploreConfig, log: list[str]
-    ) -> tuple[RecordedFlow | None, UIMap]:
-        """LLMExplorer agentic loop，产 UIMap + 程序化录制。"""
+    ) -> tuple[RecordedFlow | None, StateMap]:
+        """LLMExplorer agentic loop，产 StateMap + 程序化录制。"""
         recorder = GlobalRecorder(
             output_dir=self._flow_dir, backend=self._backend, pynput_mode=False
         )
@@ -192,12 +192,12 @@ class ExploreStage:
             max_steps=config.max_explore_steps,
             recorder=recorder,
         )
-        uimap = explorer.explore()
+        state_map = explorer.explore()
         flow = recorder.stop()
         if flow.steps:
             recorder.save_flow_yaml(flow)
-        log.append(f"llm 探索 {len(uimap.screens)} 屏")
-        return flow if flow.steps else None, uimap
+        log.append(f"llm 探索 {len(state_map.screens)} 屏")
+        return flow if flow.steps else None, state_map
 
 
 def _extract_text(msg: dict[str, Any]) -> str:

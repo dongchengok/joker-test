@@ -21,7 +21,7 @@ class ExploreReport(BaseModel):
     stage_coverage: dict[str, bool]
     explore_summary: str = ""
     flow_steps_count: int = 0
-    uimap_screen_count: int | None = None
+    state_map_screen_count: int | None = None
     solidify_summary: str | None = None
     test_count: int | None = None
     verify_ok: bool | None = None

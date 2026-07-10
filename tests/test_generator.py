@@ -1,6 +1,6 @@
 """用例生成器测试（M3a 核心，MockProvider 驱动）。
 
-验证 SmokeTestGenerator：UIMap → LLM → pytest 代码 + Pydantic spec → 质量兜底通过。
+验证 SmokeTestGenerator：StateMap → LLM → pytest 代码 + Pydantic spec → 质量兜底通过。
 这是 M3a 的完成标志（生成的代码 ruff/ast.parse 通过）。
 """
 
@@ -10,7 +10,7 @@ import ast
 
 import pytest
 
-from joker_test.explorer.types import Screen, UIElement, UIMap
+from joker_test.explorer.types import Screen, StateMap, UIElement
 from joker_test.generator import GeneratedTest, QualityError, SmokeTestGenerator
 from joker_test.generator.generator import _pair_into_generated_tests, _parse_code_blocks
 from joker_test.llm.providers.mock import MockProvider
@@ -18,9 +18,9 @@ from joker_test.llm.providers.mock import MockProvider
 # ============== fixture ==============
 
 @pytest.fixture
-def sample_uimap() -> UIMap:
-    """最小 UIMap（1 个界面 + 1 个按钮）。"""
-    return UIMap(
+def sample_state_map() -> StateMap:
+    """最小 StateMap（1 个界面 + 1 个按钮）。"""
+    return StateMap(
         screens=[
             Screen(
                 id="root",
@@ -50,21 +50,21 @@ def sample_game_meta() -> dict:
 # ============== 生成器核心 ==============
 
 def test_generate_returns_generated_tests(
-    sample_uimap: UIMap, sample_game_meta: dict
+    sample_state_map: StateMap, sample_game_meta: dict
 ) -> None:
     """生成器应返回非空 GeneratedTest 列表。"""
     gen = SmokeTestGenerator(MockProvider())
-    tests = gen.generate(sample_uimap, sample_game_meta)
+    tests = gen.generate(sample_state_map, sample_game_meta)
     assert len(tests) >= 1
     assert all(isinstance(t, GeneratedTest) for t in tests)
 
 
 def test_generated_test_has_code_and_spec(
-    sample_uimap: UIMap, sample_game_meta: dict
+    sample_state_map: StateMap, sample_game_meta: dict
 ) -> None:
     """生成的测试应含 test 代码 + spec 代码（两层分离，ADR-008）。"""
     gen = SmokeTestGenerator(MockProvider())
-    tests = gen.generate(sample_uimap, sample_game_meta)
+    tests = gen.generate(sample_state_map, sample_game_meta)
     t = tests[0]
     assert t.test_code  # 非空
     assert t.spec_code  # 非空
@@ -73,22 +73,22 @@ def test_generated_test_has_code_and_spec(
 
 
 def test_generated_code_passes_ast_parse(
-    sample_uimap: UIMap, sample_game_meta: dict
+    sample_state_map: StateMap, sample_game_meta: dict
 ) -> None:
     """生成的代码必须语法正确（ast.parse 通过）—— M3a 质量底线。"""
     gen = SmokeTestGenerator(MockProvider())
-    tests = gen.generate(sample_uimap, sample_game_meta)
+    tests = gen.generate(sample_state_map, sample_game_meta)
     for t in tests:
         ast.parse(t.test_code)  # 不抛异常即通过
         ast.parse(t.spec_code)
 
 
 def test_generated_code_contains_test_function(
-    sample_uimap: UIMap, sample_game_meta: dict
+    sample_state_map: StateMap, sample_game_meta: dict
 ) -> None:
     """生成的 test 代码应含 test_ 开头的函数。"""
     gen = SmokeTestGenerator(MockProvider())
-    tests = gen.generate(sample_uimap, sample_game_meta)
+    tests = gen.generate(sample_state_map, sample_game_meta)
     t = tests[0]
     tree = ast.parse(t.test_code)
     func_names = [
@@ -98,11 +98,11 @@ def test_generated_code_contains_test_function(
 
 
 def test_generated_spec_contains_pydantic_model(
-    sample_uimap: UIMap, sample_game_meta: dict
+    sample_state_map: StateMap, sample_game_meta: dict
 ) -> None:
     """生成的 spec 代码应含 Pydantic BaseModel 子类。"""
     gen = SmokeTestGenerator(MockProvider())
-    tests = gen.generate(sample_uimap, sample_game_meta)
+    tests = gen.generate(sample_state_map, sample_game_meta)
     t = tests[0]
     tree = ast.parse(t.spec_code)
     class_names = [

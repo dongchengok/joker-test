@@ -1,13 +1,13 @@
-"""界面地图数据结构（pydantic）。
+"""状态地图数据结构（pydantic）。
 
-M2 的核心产出物：探索器遍历游戏界面后，产出 UIMap（界面地图）JSON。
+M2 的核心产出物：探索器遍历游戏界面后，产出 StateMap（状态地图）JSON。
 这个 JSON 是编排架构里"探查类命令"的输出（D10），上层（M3 用例生成、外部 harness）依赖它。
 
 设计要点：
 - 坐标全部归一化 [0,1]，基准=screenshot 图像尺寸（与 ExecutorBackend 契约一致，G6 自洽）
 - Screen 有 fingerprint（去重指纹），Explorer 用它判断两个界面是否相同
 - Exit 编码图结构（界面 A 点按钮 → 界面 B），含切屏证据（pixel_diff_ratio）
-- UIMap 可序列化为 JSON 落盘（pydantic .model_dump()）
+- StateMap 可序列化为 JSON 落盘（pydantic .model_dump()）
 """
 
 from __future__ import annotations
@@ -52,6 +52,7 @@ class Screen(BaseModel):
     """单个界面的记录。"""
 
     id: str  # 界面标识（slug，如 "root" / "screen_1"）
+    name: str = ""  # 界面名（LLM/人类起的可读名，如"主菜单"；默认空串）
     elements: list[UIElement]  # 该界面的元素
     exits: list[Exit] = Field(default_factory=list)  # 出边
     entry: dict[str, object] | None = None  # 怎么来的（根界面为 None）
@@ -59,8 +60,8 @@ class Screen(BaseModel):
     screenshot_ref: str | None = None  # 截图保存路径（可选）
 
 
-class UIMap(BaseModel):
-    """完整界面地图（M2 最终产出）。"""
+class StateMap(BaseModel):
+    """完整状态地图（M2 最终产出）。"""
 
     screens: list[Screen]
     root_screen_id: str  # 起始界面
@@ -72,7 +73,7 @@ __all__ = [
     "UIElement",
     "Exit",
     "Screen",
-    "UIMap",
+    "StateMap",
     "ElementType",
     "ExitAction",
 ]

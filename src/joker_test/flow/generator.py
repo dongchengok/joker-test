@@ -1,7 +1,7 @@
 """RecordedFlowGenerator —— 把录制操作流 + 截图交给 LLM 生成 pytest test_case。
 
 与 SmokeTestGenerator 的区别：
-  - SmokeTestGenerator 输入是 UIMap（界面拓扑图，静态结构），输出是冒烟测试
+  - SmokeTestGenerator 输入是 StateMap（界面拓扑图，静态结构），输出是冒烟测试
   - RecordedFlowGenerator 输入是 RecordedFlow（操作时间序列 + 截图），输出是测试
 
 两者共享下游链路：_parse_code_blocks + QualityChecker + write_tests_to_dir + run_tests。

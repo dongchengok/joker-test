@@ -1,6 +1,6 @@
 """SmokeTestGenerator —— 冒烟用例生成器（M3a 核心）。
 
-消费 M2 的 UIMap，用 LLM 生成 pytest 冒烟用例（Python 代码 + Pydantic spec）。
+消费 M2 的 StateMap，用 LLM 生成 pytest 冒烟用例（Python 代码 + Pydantic spec）。
 产出 GeneratedTest 列表，M3b 执行层落盘并跑这些测试。
 
 流程（复刻 charter_gen 的成熟三段式）：
@@ -28,7 +28,7 @@ from joker_test.generator.types import GeneratedTest
 from joker_test.prompts import render_smoke_test_prompt
 
 if TYPE_CHECKING:
-    from joker_test.explorer.types import UIMap
+    from joker_test.explorer.types import StateMap
     from joker_test.llm.base import LLMProvider, Message
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ class SmokeTestGenerator:
 
     用法::
         gen = SmokeTestGenerator(provider=MockProvider())
-        tests = gen.generate(uimap, game_meta)
+        tests = gen.generate(state_map, game_meta)
         for t in tests:
             print(t.test_filename, len(t.test_code))
     """
@@ -63,11 +63,11 @@ class SmokeTestGenerator:
         self._provider = provider
         self._quality = quality_checker or QualityChecker()
 
-    def generate(self, uimap: UIMap, game_meta: dict) -> list[GeneratedTest]:
-        """从 UIMap 生成冒烟用例。
+    def generate(self, state_map: StateMap, game_meta: dict) -> list[GeneratedTest]:
+        """从 StateMap 生成冒烟用例。
 
         Args:
-            uimap: M2 探索器产出的界面地图
+            state_map: M2 探索器产出的状态地图
             game_meta: 游戏元数据（含 game_name/overview/systems）
 
         Returns:
@@ -77,7 +77,7 @@ class SmokeTestGenerator:
             QualityError: 生成的代码未通过质量检查
         """
         # 1. 渲染 prompt
-        prompt = render_smoke_test_prompt(uimap.model_dump_json(), game_meta)
+        prompt = render_smoke_test_prompt(state_map.model_dump_json(), game_meta)
         logger.info("渲染用例生成 prompt（%d 字符）", len(prompt))
 
         # 2. 调 LLM

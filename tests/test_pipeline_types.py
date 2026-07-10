@@ -31,7 +31,7 @@ def test_explore_config_mode_literal() -> None:
 def test_explore_result_skipped() -> None:
     r = ExploreResult(skipped=True, reused_test_paths=["tests/generated_smoke/test_a.py"])
     assert r.flow is None
-    assert r.uimap is None
+    assert r.state_map is None
     assert r.match_reason is None
 
 

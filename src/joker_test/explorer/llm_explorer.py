@@ -8,12 +8,12 @@ DFS 发现不了的语义关联（如"这个按钮会打开设置"）。
 - 状态自洽：持有 backend + llm + 探索状态（已访问界面、操作历史）
 - LLM 克制：每界面只调 1-2 次 LLM（1 次理解 + 1 次决策下一步）
 - 安全：每步截图存档，操作前/后都记录，失败可回放
-- 产出 UIMap：与 UIExplorer 同构，可喂给 SmokeTestGenerator
+- 产出 StateMap：与 UIExplorer 同构，可喂给 SmokeTestGenerator
 
 用法::
 
     explorer = LLMExplorer(backend=backend, llm=llm, max_steps=5)
-    uimap = explorer.explore()
+    state_map = explorer.explore()
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import cv2
 
-from joker_test.explorer.types import Exit, Screen, UIElement, UIMap
+from joker_test.explorer.types import Exit, Screen, StateMap, UIElement
 from joker_test.trace import trace_event, trace_stage
 
 if TYPE_CHECKING:
@@ -73,8 +73,8 @@ class LLMExplorer:
         self._tried_actions: set[tuple[str, str]] = set()  # (界面指纹, 操作target) 去重
         self._stale_count = 0  # 连续无新界面的步数
 
-    def explore(self) -> UIMap:
-        """LLM 驱动探索，返回 UIMap。带容错兜底保证探索持续深入不中断。
+    def explore(self) -> StateMap:
+        """LLM 驱动探索，返回 StateMap。带容错兜底保证探索持续深入不中断。
 
         容错机制：
         - 单步异常隔离：截图/LLM调用/操作失败不中断整个探索，跳过该步继续
@@ -259,7 +259,7 @@ class LLMExplorer:
             "screens": len(self._screens), "screen_names": list(self._screen_names),
         })
 
-        return UIMap(
+        return StateMap(
             screens=self._screens,
             root_screen_id=self._screens[0].id if self._screens else "",
             explored_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -317,6 +317,7 @@ class LLMExplorer:
 
         screen = Screen(
             id=screen_id,
+            name=name,
             elements=elements,
             exits=[],
             fingerprint=fingerprint,

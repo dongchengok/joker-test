@@ -150,13 +150,13 @@ def load_charter_schema() -> str:
     return _read_text(_TEMPLATES_DIR / "charter_schema.md")
 
 
-def render_smoke_test_prompt(uimap_json: str, game_meta: dict) -> str:
+def render_smoke_test_prompt(state_map_json: str, game_meta: dict) -> str:
     """渲染冒烟用例生成 prompt（M3a 新增）。
 
-    把 UIMap JSON + 游戏元数据 + 质量标准注入模板，让 LLM 产出 pytest 代码 + Pydantic spec。
+    把 StateMap JSON + 游戏元数据 + 质量标准注入模板，让 LLM 产出 pytest 代码 + Pydantic spec。
 
     Args:
-        uimap_json: UIMap 序列化后的 JSON 字符串（M2 探索器的产出）
+        state_map_json: StateMap 序列化后的 JSON 字符串（M2 探索器的产出）
         game_meta: 游戏元数据 dict（含 game_name/overview 等）
     """
     systems = game_meta.get("systems") or game_meta.get("targets")
@@ -165,7 +165,7 @@ def render_smoke_test_prompt(uimap_json: str, game_meta: dict) -> str:
         game_name=game_meta.get("game_name", "未知游戏"),
         game_overview=game_meta.get("overview", "（无概述）"),
         game_systems=[s.get("system") or s.get("name", "") for s in systems] if systems else [],
-        uimap_json=uimap_json,
+        state_map_json=state_map_json,
         quality_rules=load_constant("smoke_quality_rules"),
     )
 

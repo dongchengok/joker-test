@@ -124,8 +124,8 @@ def _extract_text(msg: Message) -> str:
 def _summarize_prompt(prompt: str) -> str:
     """给 prompt 生成一行摘要（取前 100 字 + 检测关键标记）。"""
     markers = []
-    if "<uimap>" in prompt.lower() or "uimap" in prompt.lower():
-        markers.append("UIMap")
+    if "<state_map>" in prompt.lower() or "state_map" in prompt.lower():
+        markers.append("StateMap")
     if "charter" in prompt.lower():
         markers.append("Charter")
     if "测试" in prompt and "生成" in prompt:

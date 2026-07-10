@@ -4,7 +4,7 @@ pyproject.toml 已注册 joker-test = "joker_test.cli:main"。
 子命令：
   - explore：智能探索入口（固化命中检查 + 三模式探索 + 可串联固化/执行）
   - record：录制操作流程并生成 test_case（explore --mode manual 的快捷方式）
-  - explore-ui：界面探索（产出 UIMap，explore --no-solidify 的快捷方式）
+  - explore-ui：界面探索（产出 StateMap，explore --no-solidify 的快捷方式）
   - run-smoke：跑冒烟测试 + 报告（脱离 LLM）
   - run-all：一键编排（AgenticOrchestrator 四阶段流水线）
   - generate-charter：生成 Charter（委托 charter_gen）
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     # explore-ui
     p_eu = sub.add_parser("explore-ui", help="探索游戏界面，产出界面地图")
     p_eu.add_argument("--window", required=True, help="窗口标题（子串匹配）")
-    p_eu.add_argument("--output", required=True, help="输出 UIMap JSON 路径")
+    p_eu.add_argument("--output", required=True, help="输出 StateMap JSON 路径")
     p_eu.add_argument("--max-depth", type=int, default=5)
     p_eu.add_argument("--no-trace", action="store_true", help="关闭 trace（默认开启）")
 
@@ -164,10 +164,10 @@ def _cmd_explore_ui(args: argparse.Namespace) -> int:
         initial_screen="root",
     )
     explorer = UIExplorer(backend, max_depth=args.max_depth, screen_change_timeout=0.5)
-    uimap = explorer.explore()
+    state_map = explorer.explore()
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.output).write_text(uimap.model_dump_json(indent=2), encoding="utf-8")
-    print(f"界面地图已写入: {args.output}（{len(uimap.screens)} 个界面）")
+    Path(args.output).write_text(state_map.model_dump_json(indent=2), encoding="utf-8")
+    print(f"界面地图已写入: {args.output}（{len(state_map.screens)} 个界面）")
     return 0
 
 

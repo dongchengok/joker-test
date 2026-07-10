@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from joker_test.explorer.types import UIMap
+from joker_test.explorer.types import StateMap
 from joker_test.flow.types import RecordedFlow
 from joker_test.reporters.base import TestSession
 
@@ -35,7 +35,7 @@ class ExploreResult(BaseModel):
     __test__ = False
     flow: RecordedFlow | None = None
     flow_dir: str | None = None
-    uimap: UIMap | None = None
+    state_map: StateMap | None = None
     skipped: bool = False
     reused_test_paths: list[str] = Field(default_factory=list)
     match_reason: str | None = None

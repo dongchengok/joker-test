@@ -99,8 +99,8 @@ def test_llm_match_miss_proceeds_to_explore(tmp_path: Path) -> None:
 
 # ===== 三模式分发 =====
 
-def test_dfs_mode_produces_uimap(tmp_path: Path) -> None:
-    """dfs 模式调用 UIExplorer 产 UIMap。"""
+def test_dfs_mode_produces_state_map(tmp_path: Path) -> None:
+    """dfs 模式调用 UIExplorer 产 StateMap。"""
     from joker_test.executor.base import BBox
 
     backend = FakeBackend(
@@ -127,7 +127,7 @@ def test_dfs_mode_produces_uimap(tmp_path: Path) -> None:
     )
     result = stage.run(cfg)
     assert result.skipped is False
-    assert result.uimap is not None
+    assert result.state_map is not None
 
 
 def test_llm_mode_runs_without_crash(tmp_path: Path) -> None:
