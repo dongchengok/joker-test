@@ -23,7 +23,7 @@ def _make_flow() -> RecordedFlow:
 def test_solidify_generates_tests(tmp_path: Path) -> None:
     """固化阶段调 generator 产 test_case。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [
             {
                 "type": "text",
@@ -55,7 +55,7 @@ def test_solidify_generates_tests(tmp_path: Path) -> None:
 def test_solidify_skips_verify_when_disabled(tmp_path: Path) -> None:
     """verify_during_solidify=False → 不试跑。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [
             {
                 "type": "text",

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from joker_test.executor import set_active_backend
 from joker_test.executor.backends.fake import FakeBackend, ScreenCfg
 from joker_test.executor.base import BBox, ExecutorBackend
 
@@ -89,10 +90,12 @@ def backend() -> Iterator[ExecutorBackend]:
 
         backend = AirtestBackend(window_title=window_title, ocr=RapidOCRProvider())
         backend.connect()
+        set_active_backend(backend)
         yield backend
         backend.close()
     else:
         fb = _make_fake_backend()
         fb.connect()
+        set_active_backend(fb)
         yield fb
         fb.close()

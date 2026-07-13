@@ -39,7 +39,7 @@ def test_should_not_stop_early() -> None:
 def test_on_action_executed_records_tried_action() -> None:
     """动作执行后记录 tried_actions。"""
     strategy = ReactStateStrategy(llm=MockProvider(), intent="目标")
-    decision = StepDecision(think="点按钮", action="click_text", description="开始")
+    decision = StepDecision(think="点按钮", action="click", description="开始")
     result = ActionResult(success=True, screen_changed=True, pixel_diff_ratio=0.2)
     strategy.on_action_executed(decision, result)
     assert len(strategy._state.tried_actions) >= 1
@@ -49,7 +49,7 @@ def test_on_action_executed_no_change_increases_stale() -> None:
     """动作执行后界面无变化 → stale_count +1。"""
     strategy = ReactStateStrategy(llm=MockProvider(), intent="目标")
     strategy._state.stale_count = 0
-    decision = StepDecision(think="点按钮", action="click_text", description="开始")
+    decision = StepDecision(think="点按钮", action="click", description="开始")
     result = ActionResult(success=True, screen_changed=False)
     strategy.on_action_executed(decision, result)
     assert strategy._state.stale_count == 1
@@ -68,15 +68,17 @@ def test_get_state_map_returns_statemap() -> None:
 def test_decide_calls_llm_with_react_format() -> None:
     """decide 调 LLM，解析 <think>/<answer> 格式。"""
     mock_llm = MagicMock()
-    mock_llm.simple_converse.return_value = {
+    mock_llm.create.return_value = {
         "content": [
             {
-                "type": "text",
-                "text": (
-                    "<think>看到主菜单，应该点进入地牢</think>"
-                    '<answer>{"action":"click_text","target":"进入地牢",'
-                    '"description":"进入地牢","goal_progress":"正在进入"}</answer>'
-                ),
+                "type": "tool_use",
+                "name": "execute_action",
+                "input": {
+                    "action": "click",
+                    "target": "进入地牢",
+                    "think": "看到主菜单，应该点进入地牢",
+                    "goal_progress": "正在进入",
+                },
             }
         ]
     }
@@ -85,6 +87,6 @@ def test_decide_calls_llm_with_react_format() -> None:
         step=0, max_steps=10, intent="进入地牢", backend=None, llm=mock_llm
     )
     decision = strategy.decide(screenshot=None, perception=None, ctx=ctx)
-    assert decision.action == "click_text"
+    assert decision.action == "click"
     assert "主菜单" in decision.think or "进入地牢" in decision.think
     assert decision.goal_progress == "正在进入"

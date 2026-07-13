@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from joker_test import __version__
+from joker_test.executor import set_active_backend
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,6 +170,7 @@ def _cmd_explore_ui(args: argparse.Namespace) -> int:
         },
         initial_screen="root",
     )
+    set_active_backend(backend)
     explorer = UIExplorer(backend, max_depth=args.max_depth, screen_change_timeout=0.5)
     state_map = explorer.explore()
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -319,8 +321,10 @@ def _cmd_record(args: argparse.Namespace) -> int:
     import shutil  # noqa: PLC0415
 
     from joker_test.flow import FlowNamer, GlobalRecorder  # noqa: PLC0415
-    from joker_test.llm.providers.anthropic import load_env  # noqa: PLC0415
-    from joker_test.llm.providers.mimo import MiMoProvider  # noqa: PLC0415
+    from joker_test.llm.providers.anthropic import (
+        AnthropicProvider,  # noqa: PLC0415
+        load_env,  # noqa: PLC0415
+    )
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -375,9 +379,9 @@ def _cmd_record(args: argparse.Namespace) -> int:
         flow.description = "（手动指定名称）"
     else:
         print("LLM 起名中...")
-        from joker_test.llm.providers.tracing import TracingProvider  # noqa: PLC0415
+          # noqa: PLC0415
 
-        namer_llm = TracingProvider(MiMoProvider(), model=model)
+        namer_llm = AnthropicProvider()
         namer = FlowNamer(namer_llm)
         name, desc = namer.name_flow(flow, tmp_dir / "screenshots")
         flow.name = name
@@ -416,7 +420,7 @@ def _generate_from_flow(flow_dir: Path, cfg: dict, model: str) -> int:
 
     from joker_test.flow import RecordedFlow, RecordedFlowGenerator  # noqa: PLC0415
     from joker_test.generator.generator import write_tests_to_dir  # noqa: PLC0415
-    from joker_test.llm.providers.mimo import MiMoProvider  # noqa: PLC0415
+    from joker_test.llm.providers.anthropic import AnthropicProvider  # noqa: PLC0415
     from joker_test.ocr.providers.rapidocr import RapidOCRProvider  # noqa: PLC0415
 
     # 读 flow.yaml
@@ -439,9 +443,9 @@ def _generate_from_flow(flow_dir: Path, cfg: dict, model: str) -> int:
     )
 
     print("生成 test_case 中（LLM 坐标语义化 + 代码生成）...")
-    from joker_test.llm.providers.tracing import TracingProvider  # noqa: PLC0415
+      # noqa: PLC0415
 
-    provider = TracingProvider(MiMoProvider(), model=model)
+    provider = AnthropicProvider()
     ocr = RapidOCRProvider()
     gen = RecordedFlowGenerator(provider=provider, ocr_provider=ocr)
     try:

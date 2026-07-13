@@ -13,6 +13,7 @@ import pytest
 from joker_test.explorer.types import Screen, StateMap, UIElement
 from joker_test.generator import GeneratedTest, QualityError, SmokeTestGenerator
 from joker_test.generator.generator import _pair_into_generated_tests, _parse_code_blocks
+from joker_test.llm.base import build_user_message
 from joker_test.llm.providers.mock import MockProvider
 
 # ============== fixture ==============
@@ -197,7 +198,7 @@ def test_mock_provider_charter_mode_unchanged() -> None:
     """MockProvider 的 charter 生成行为不应被 M3a 改动影响。"""
     provider = MockProvider()
     # charter 场景：prompt 不含"冒烟测试用例"
-    msg = provider.simple_converse("生成 Charter 草稿", [], reasoning=16000)
+    msg = provider.create(messages=[build_user_message("生成 Charter 草稿")])
     text = msg["content"][0].get("text", "")
     assert "Mock Architect" in text  # 原 charter 行为
 
@@ -205,9 +206,7 @@ def test_mock_provider_charter_mode_unchanged() -> None:
 def test_mock_provider_smoke_mode() -> None:
     """MockProvider 在用例生成场景应返回测试代码。"""
     provider = MockProvider()
-    msg = provider.simple_converse(
-        "请基于界面地图生成冒烟测试用例", [], reasoning=16000
-    )
+    msg = provider.create(messages=[build_user_message("请基于界面地图生成冒烟测试用例")])
     text = msg["content"][0].get("text", "")
     assert "### test_" in text  # 用例生成回复
     assert "```python" in text

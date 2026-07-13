@@ -3,7 +3,7 @@
 5 步串起：
 1. 提示词配置（examples/e2e_launch_quit/game_metadata.json）
 2. 探索器产出 UIMap（FakeBackend 模拟"主菜单→游戏→返回"场景）
-3. GLMProvider 生成 pytest testcase
+3. AnthropicProvider 生成 pytest testcase
 4. runner 执行 testcase
 5. reporters 出 JSON + HTML 报告
 
@@ -72,22 +72,21 @@ for s in uimap.screens:
     texts = [e.text for e in s.elements if e.text]
     print(f"  [{s.id}] 按钮: {texts}，exits: {len(s.exits)}")
 
-# Step 3: GLMProvider 生成 testcase
+# Step 3: AnthropicProvider 生成 testcase
 print("\n" + "=" * 60)
 print("Step 3: GLM 生成 pytest testcase（真 LLM）")
 print("=" * 60)
 from joker_test.generator import SmokeTestGenerator, write_tests_to_dir
-from joker_test.llm.providers.glm import GLMProvider
-from joker_test.llm.providers.mimo import MiMoProvider
+from joker_test.llm.providers.anthropic import AnthropicProvider
 
 gen_dir = REPO / "tests" / "generated_smoke"
 # 选择 provider（默认 MiMo 全模态，可切 GLM）
 if LLM_CHOICE == "glm":
-    provider = GLMProvider()
-    print(f"使用 GLMProvider（模型: {provider._model}）")  # noqa: SLF001
+    provider = AnthropicProvider()
+    print(f"使用 AnthropicProvider（模型: {provider._model}）")  # noqa: SLF001
 else:
-    provider = MiMoProvider()
-    print(f"使用 MiMoProvider（模型: {provider._model}，全模态）")  # noqa: SLF001
+    provider = AnthropicProvider()
+    print(f"使用 AnthropicProvider（模型: {provider._model}，全模态）")  # noqa: SLF001
 gen = SmokeTestGenerator(provider)
 try:
     tests = gen.generate(uimap, game_meta)

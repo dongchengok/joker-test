@@ -1,79 +1,153 @@
-"""LLM Provider 协议 —— joker-test 的 LLM 调用接缝。
+"""LLM Provider 协议 —— 对齐 anthropic SDK 接口。
 
-这是 M0 解耦 SpecOps-src 硬依赖的核心产物（roadmap R-ADR-3 / R-ADR-6）。
-
-设计要点：
-- **async-friendly**：当前为同步协议。签名不阻碍未来加 async 变体
-  （MCP sampling 是异步的，roadmap R-ADR-9 保留余地）。当前调用方都是同步的，
-  强行 async 反而要改 charter_gen 主流程，故现在不引入。
-- **对齐现有调用点**：协议方法签名严格对齐 charter_gen.py 原来对
-  converse.simple_converse / operate.converse_json 的调用（行 198/205/211）。
-- **三种实现**：BedrockProvider（独立模式主力）、MockProvider（测试/CI）、
-  MCPSamplingProvider（R-ADR-9 降级，仅签名兼容，不预留实现）。
+唯一真实实现：AnthropicProvider（anthropic SDK + instructor）。
+测试用：MockProvider（固定回复）。
+trace 内置到 provider 内部。
 """
-
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
 
 class Message(TypedDict):
-    """LLM 一次回复的消息结构。
+    """LLM 消息（对齐 Anthropic Messages API）。
 
-    对齐现有 charter_gen._log_message 解析的 dict 格式（Bedrock converse 返回结构）：
-      content: list[dict]，每个 dict 形如
-        {"text": "..."}                 —— 文本回复
-        {"reasoningContent": {...}}      —— thinking 块
+    content: list[dict]，每个 block：
+      {"type": "text", "text": "..."}
+      {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}
+      {"type": "tool_use", "name": "...", "input": {...}}
+      {"type": "tool_result", "tool_use_id": "...", "content": [...]}
     """
 
     content: list[dict[str, Any]]
 
 
+def build_user_message(
+    prompt: str, images: list[str] | None = None
+) -> dict[str, Any]:
+    """拼装标准 user message（图片在前，文本在后）。
+
+    Args:
+        prompt: 文本内容
+        images: base64 图片列表（无 data: 前缀）
+
+    Returns:
+        {"role": "user", "content": [image_blocks..., text_block]}
+    """
+    content: list[dict[str, Any]] = []
+    if images:
+        for img_b64 in images:
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": img_b64,
+                },
+            })
+    content.append({"type": "text", "text": prompt})
+    return {"role": "user", "content": content}
+
+
+def format_trace_messages(messages: list[dict[str, Any]]) -> str:
+    """把 messages 序列化为可读的调试字符串（截断图片数据）。
+
+    供 provider 内部调 trace_llm(prompt_dump=...) 用。
+    图片只显示类型和大小，文本截断 500 字。
+    """
+    parts: list[str] = []
+    for msg in messages:
+        role = msg.get("role", "?")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            parts.append(f"[{role}] {content[:500]}")
+        elif isinstance(content, list):
+            texts: list[str] = []
+            for block in content:
+                if isinstance(block, dict):
+                    btype = block.get("type", "")
+                    if btype == "text" or "text" in block:
+                        texts.append(block.get("text", "")[:200])
+                    elif btype == "image":
+                        src = block.get("source", {})
+                        texts.append(f"[图片: {src.get('media_type', '?')} {len(src.get('data', ''))}B]")
+                    elif btype == "tool_use":
+                        inp = block.get("input", {})
+                        texts.append(f"[tool_use: {block.get('name', '?')} {json.dumps(inp, ensure_ascii=False)[:200]}]")
+            parts.append(f"[{role}] {' '.join(texts)[:500]}")
+    return "\n\n".join(parts)
+
+
 @runtime_checkable
 class LLMProvider(Protocol):
-    """LLM 调用接缝协议。所有业务代码（generate_charters 等）只面向此协议，
-    不关心 LLM 从哪来（自带 / 借 harness / Mock）。
+    """LLM 调用协议（对齐 anthropic SDK）。"""
 
-    实现者：
-      - BedrockProvider：从 SpecOps-src 包裹 AWS Bedrock（独立模式）
-      - MockProvider：返回固定 JSON（测试/CI，M0 实现）
-      - MCPSamplingProvider：借 harness LLM（R-ADR-9 低优先级，仅签名兼容）
-    """
-
-    def simple_converse(
+    def create(
         self,
-        prompt: str,
-        messages: list[Message],
         *,
-        reasoning: int = 0,
-        images: list[str] | None = None,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | None = None,
     ) -> Message:
-        """发送一次对话，返回 assistant 回复消息。
+        """创建消息（对齐 client.messages.create）。
 
         Args:
-            prompt: 本次要发的 prompt（user message 内容）
-            messages: 已有对话历史（Architect 的输出会追加进来给 Analyst）
-            reasoning: reasoning token 预算（Bedrock 特有，0 表示不启用）
-            images: 图片 base64 列表（多模态，无 data: 前缀）。
-                None=纯文本；传入=多模态模型看图（mimo-v2.5/glm-5v 等）
-        """
-        ...
-
-    def converse_json(
-        self,
-        messages: list[Message],
-        instruction: str,
-    ) -> list[dict[str, Any]]:
-        """让 LLM 按 instruction 把对话内容提取为结构化 JSON 数组。
-
-        Args:
-            messages: 完整对话历史（含 Architect + Analyst 的回复）
-            instruction: 提取指令（通常是 JSON schema 描述）
+            messages: 完整对话历史（含当前 user message）
+            model: 模型名（None=用默认）
+            max_tokens: 最大输出 token（None=用默认）
+            tools: 工具定义列表
+            tool_choice: 工具选择策略
 
         Returns:
-            结构化 JSON 数组。charter_gen 当 list[dict] 用（每个 dict 是一个 Charter）。
+            Message（content 含 text/tool_use blocks）
         """
         ...
 
+    def parse(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        response_model: type,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> Any:
+        """结构化输出（对齐 client.messages.parse，Pydantic 校验）。
 
-__all__ = ["LLMProvider", "Message"]
+        Args:
+            messages: 对话历史
+            response_model: Pydantic BaseModel 类
+            model: 模型名
+            max_tokens: 最大输出 token
+
+        Returns:
+            response_model 实例（Pydantic 校验过的对象）
+        """
+        ...
+
+    def stream(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> Any:
+        """流式输出（对齐 client.messages.stream）。
+
+        Returns:
+            流式上下文管理器
+        """
+        ...
+
+    def count_tokens(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+    ) -> int:
+        """估算 token 用量（对齐 client.messages.count_tokens）。"""
+        ...
+
+
+__all__ = ["LLMProvider", "Message", "build_user_message", "format_trace_messages"]

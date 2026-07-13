@@ -20,7 +20,10 @@ from joker_test.explorer.llm_explorer import LLMExplorer
 from joker_test.explorer.types import StateMap
 from joker_test.flow.recorder import GlobalRecorder
 from joker_test.flow.types import RecordedFlow
-from joker_test.llm.base import LLMProvider
+from joker_test.llm.base import (
+    LLMProvider,
+    build_user_message,  # noqa: PLC0415
+)
 from joker_test.pipeline.types import ExploreConfig, ExploreResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -123,7 +126,7 @@ class ExploreStage:
             '{"hit": true/false, "path": "文件名", "reason": "..."}'
         )
         try:
-            msg = self._provider.simple_converse(prompt, [], reasoning=4000)
+            msg = self._provider.create(messages=[build_user_message(prompt)])
         except Exception as e:  # noqa: BLE001
             _LOGGER.warning("命中检查 LLM 调用失败：%s，降级为未命中", e)
             return None

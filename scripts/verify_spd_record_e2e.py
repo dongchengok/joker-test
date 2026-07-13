@@ -58,17 +58,13 @@ def reset_spd() -> None:
 
 
 def make_llm():
-    """构造带 trace 的 MiMo provider（TracingProvider 包装，自动记录 LLM 调用）。
+    """构造带 trace 的 MiMo provider（内置 trace，自动记录 LLM 调用）。
 
     全局 trace 模式：不传 tracer，首次打点惰性建 Tracer，atexit 自动收尾。
     """
-    from joker_test.llm.providers.anthropic import load_env  # noqa: PLC0415
-    from joker_test.llm.providers.mimo import MiMoProvider  # noqa: PLC0415
-    from joker_test.llm.providers.tracing import TracingProvider  # noqa: PLC0415
+    from joker_test.llm.providers.anthropic import AnthropicProvider  # noqa: PLC0415
 
-    cfg = load_env()
-    model = cfg.get("MIMO_MODEL", "mimo-v2.5")
-    return TracingProvider(MiMoProvider(), model=model)
+    return AnthropicProvider()
 
 
 print("=" * 70)

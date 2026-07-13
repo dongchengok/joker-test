@@ -28,7 +28,7 @@ import sys
 from tqdm import tqdm
 
 from joker_test.llm.base import LLMProvider, Message
-from joker_test.llm.providers import resolve_default_provider
+from joker_test.llm.providers.anthropic import AnthropicProvider
 from joker_test.llm.providers.mock import MockProvider
 from joker_test.prompts import (
     load_charter_schema,
@@ -41,9 +41,11 @@ from joker_test.prompts import (
 logger = logging.getLogger(__name__)
 
 
-# 模块加载时尝试解析默认 provider（SpecOps-src 不存在则 None，不报错）。
-# provider 的实现细节在 llm/providers/bedrock.py，charter_gen 只持有"默认是谁"这个状态。
-DEFAULT_PROVIDER: LLMProvider | None = resolve_default_provider()
+# 默认用 AnthropicProvider（从 .env 读 MiMo 配置），失败则 None（测试用 MockProvider）。
+try:
+    DEFAULT_PROVIDER: LLMProvider | None = AnthropicProvider()
+except (ValueError, Exception):  # noqa: BLE001
+    DEFAULT_PROVIDER = None
 
 # 提示词常量/模板/数据已抽到 joker_test.prompts 包（见 prompts/loader.py），
 # 通过 load_default_personas / load_default_heuristics / render_*_prompt 调用。
@@ -74,17 +76,16 @@ def generate_charters(targets_file, game_meta_file, output_dir=None,
         target_ids: 只跑指定 target id（None=全部）
         persona_filter: 只跑指定 Persona 名称（None=全部）
         batch: 一次送几个 target 给 LLM（默认 2，因为每个 target 会展开多个 persona）
-        provider: LLM provider（M0 解耦新增）。None 时用 DEFAULT_PROVIDER（SpecOps-src
-            存在则 Bedrock，否则 None）。测试/CI 用 MockProvider。
+        provider: LLM provider。None 时用 DEFAULT_PROVIDER（从 .env 配置）。
+            测试/CI 用 MockProvider。
     """
-    # 0. 解析 provider（M0 解耦：原硬依赖 import converse/operate 改为注入）
     if provider is None:
         provider = DEFAULT_PROVIDER
     if provider is None:
         raise RuntimeError(
             "无可用 LLM provider。解决方式（任选其一）：\n"
             "  1. 测试/CI：传入 MockProvider（from joker_test.llm import MockProvider）\n"
-            "  2. 独立模式：clone SpecOps-src 到仓库根，或设 SPECOPS_SRC 环境变量\n"
+            "  2. 配置 .env（MIMO_API_KEY/MIMO_BASE_URL/MIMO_MODEL）后用 AnthropicProvider\n"
             "  3. 自定义：实现 LLMProvider 协议并注入（见 llm/base.py）"
         )
 
@@ -120,24 +121,32 @@ def generate_charters(targets_file, game_meta_file, output_dir=None,
 
         messages: list[Message] = []
 
-        # 5. Step 1: Charter Architect 生成（reasoning=16000，标准深度）
-        step1_msg = provider.simple_converse(architect_prompt, messages, reasoning=16000)
+        from joker_test.llm.base import build_user_message  # noqa: PLC0415
+
+        # 5. Step 1: Charter Architect 生成
+        step1_msg = provider.create(messages=[build_user_message(architect_prompt)])
         _log_message(step1_msg, "Step 1 — Architect 生成")
         messages.append(step1_msg)
 
-        # 6. Step 2: Charter Analyst 反思（reasoning=32000，最深思考）
-        #    关键：同一 conversation 反思，Analyst 能看到 Architect 的 thinking
+        # 6. Step 2: Charter Analyst 反思
         analyst_prompt = render_analyst_prompt(game_meta)
-        step2_msg = provider.simple_converse(analyst_prompt, messages, reasoning=32000)
+        step2_msg = provider.create(messages=messages + [build_user_message(analyst_prompt)])
         _log_message(step2_msg, "Step 2 — Analyst 反思")
         messages.append(step2_msg)
 
-        # 7. Step 3: JSON 提取（让 LLM 按 schema 输出结构化 Charter 数组）
+        # 7. Step 3: JSON 提取
         json_schema = load_charter_schema()
-        extracted = provider.converse_json(
-            messages,
-            f"谢谢。请将修订后的 Charter 输出为 JSON 数组。Schema 如下：\n\n{json_schema}"
+        extract_prompt = (
+            f"谢谢。请将修订后的 Charter 输出为 JSON 数组。Schema 如下：\n\n{json_schema}\n\n"
+            "请只回答 JSON 数组，不要其他文字。"
         )
+        extract_msg = provider.create(messages=messages + [build_user_message(extract_prompt)])
+        from joker_test.llm.providers.anthropic import (  # noqa: PLC0415
+            extract_text,
+            parse_json_array,
+        )
+
+        extracted = parse_json_array(extract_text(extract_msg))
 
         # 8. 每个 Charter 写成独立 JSON 文件
         for charter in extracted:
@@ -194,7 +203,7 @@ def main():
     parser.add_argument("--verbose", action="store_true",
                         help="记录完整 LLM 响应（含 thinking）到 <output_dir>/generation.log")
     parser.add_argument("--provider", choices=["mock", "default"], default="default",
-                        help="LLM provider：mock=离线测试（无网络）；default=自动检测"
+                        help="LLM provider：mock=离线测试（无网络）；default=从.env配置（MiMo）"
                              "（SpecOps-src 存在则 Bedrock，否则报错）。默认 default。")
     args = parser.parse_args()
 

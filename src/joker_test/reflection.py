@@ -77,7 +77,9 @@ def review_failure(
         "请只回答 JSON：{\"is_false_positive\": true/false, \"reason\": \"...\"}"
     )
     try:
-        msg = provider.simple_converse(prompt, [], reasoning=8000)
+        from joker_test.llm.base import build_user_message  # noqa: PLC0415
+
+        msg = provider.create(messages=[build_user_message(prompt)])
     except Exception as e:  # noqa: BLE001
         logger.warning("误报审查 LLM 调用失败: %s，保守判为真 bug", e)
         return False, f"LLM 调用失败: {e}"

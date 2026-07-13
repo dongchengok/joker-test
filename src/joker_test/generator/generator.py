@@ -5,7 +5,7 @@
 
 流程（复刻 charter_gen 的成熟三段式）：
   1. 渲染 prompt（Jinja2，复用 prompts/loader）
-  2. provider.simple_converse 发给 LLM
+  2. provider.create 发给 LLM
   3. 从回复文本解析代码块（### filename + ```python）
   4. 质量兜底（QualityChecker: ruff + ast.parse）
   5. 返回 GeneratedTest 列表
@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from joker_test.generator.quality import QualityChecker, QualityError
 from joker_test.generator.types import GeneratedTest
+from joker_test.llm.base import build_user_message  # noqa: PLC0415
 from joker_test.prompts import render_smoke_test_prompt
 
 if TYPE_CHECKING:
@@ -81,7 +82,7 @@ class SmokeTestGenerator:
         logger.info("渲染用例生成 prompt（%d 字符）", len(prompt))
 
         # 2. 调 LLM
-        msg = self._provider.simple_converse(prompt, [], reasoning=16000)
+        msg = self._provider.create(messages=[build_user_message(prompt)])
         reply_text = _extract_text(msg)
         if not reply_text:
             raise QualityError("LLM 回复为空，无法解析代码")

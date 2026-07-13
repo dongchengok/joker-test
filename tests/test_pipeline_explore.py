@@ -27,7 +27,7 @@ def test_check_reuse_disabled_no_llm() -> None:
         "joker_test.pipeline.types", fromlist=["ExploreConfig"]
     ).ExploreConfig(intent="x", check_reuse=False, solidify=False, execute=False)
     mock_provider = MagicMock()
-    mock_provider.simple_converse.side_effect = AssertionError("不该调 LLM")
+    mock_provider.create.side_effect = AssertionError("不该调 LLM")
     stage = ExploreStage(provider=mock_provider, backend=FakeBackend())
     result = stage.run(cfg)
     assert result.skipped is False
@@ -61,7 +61,7 @@ def test_llm_match_hit_skips_exploration(tmp_path: Path) -> None:
         '"""测试登录。"""\n\ndef test_login():\n    pass\n', encoding="utf-8"
     )
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [{"type": "text", "text": '{"hit": true, "path": "test_login.py", "reason": "意图匹配"}'}]
     }
     stage = ExploreStage(provider=mock_provider, backend=FakeBackend(), gen_dir=gen_dir)
@@ -77,7 +77,7 @@ def test_llm_match_hit_skips_exploration(tmp_path: Path) -> None:
 def test_llm_match_miss_proceeds_to_explore(tmp_path: Path) -> None:
     """LLM 命中检查返回未命中 → 继续探索。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [{"type": "text", "text": '{"hit": false, "reason": "无匹配"}'}]
     }
     backend = FakeBackend(
@@ -133,7 +133,7 @@ def test_dfs_mode_produces_state_map(tmp_path: Path) -> None:
 def test_llm_mode_runs_without_crash(tmp_path: Path) -> None:
     """llm 模式调用 LLMExplorer，不崩溃。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [{"type": "text", "text": '{"screen_name": "主页", "elements": []}'}]
     }
     backend = FakeBackend(

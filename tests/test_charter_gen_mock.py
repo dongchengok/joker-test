@@ -13,6 +13,7 @@ import pytest
 
 from joker_test.charter_gen import generate_charters, write_charter
 from joker_test.llm import MockProvider
+from joker_test.llm.base import build_user_message
 
 # ============== generate_charters 端到端 ==============
 
@@ -131,9 +132,15 @@ def test_mock_provider_satisfies_protocol() -> None:
     assert isinstance(MockProvider(), LLMProvider)
 
 
-def test_mock_provider_converse_json_returns_list_of_dicts() -> None:
-    """converse_json 应返回 list[dict]（决策点 A：对齐现有用法）。"""
-    result = MockProvider().converse_json([], "instruction")
-    assert isinstance(result, list)
-    assert all(isinstance(item, dict) for item in result)
-    assert len(result) == 2  # 固定 2 个 charter
+def test_mock_provider_create_returns_message() -> None:
+    """create 应返回 Message dict（含 content 列表）。"""
+    from joker_test.llm.providers.anthropic import extract_text, parse_json_array
+
+    reply = MockProvider().create(messages=[build_user_message("test")])
+    assert "content" in reply
+    text = extract_text(reply)
+    assert text  # 非空
+    # MockProvider 的 architect reply 含 charter JSON
+    charters = parse_json_array(text)
+    assert isinstance(charters, list)
+    assert all(isinstance(item, dict) for item in charters)

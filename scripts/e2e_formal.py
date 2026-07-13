@@ -39,11 +39,11 @@ print("✓ SPD 运行中")
 # Step 1: 多层识别探索
 print("\n[1/4] 多层识别探索真 SPD（OCR + LLM 识图）...")
 from joker_test.executor.backends.airtest import AirtestBackend  # noqa: E402
-from joker_test.llm.providers.mimo import MiMoProvider  # noqa: E402
+from joker_test.llm.providers.anthropic import AnthropicProvider
 from joker_test.ocr.providers.rapidocr import RapidOCRProvider  # noqa: E402
 from joker_test.perception import PerceptionEngine  # noqa: E402
 
-mimo = MiMoProvider(max_tokens=4096)
+mimo = AnthropicProvider(max_tokens=4096)
 ocr = RapidOCRProvider()
 backend = AirtestBackend(window_title="Shattered", ocr=ocr)
 backend.connect()

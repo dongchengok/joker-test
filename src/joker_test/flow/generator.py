@@ -9,7 +9,7 @@
 流程：
   1. 对每个 click 步骤跑 semanticize_step（坐标 → OCR 文字/图像模板）
   2. 渲染 recorded_flow.md.j2（操作流 + 语义化结果 + 截图说明）
-  3. 读截图为 base64 列表，simple_converse(prompt, [], images=[...], reasoning=16000)
+  3. 读截图为 base64 列表，create(prompt, [], images=[...], reasoning=16000)
   4. 复用 _parse_code_blocks + _pair_into_generated_tests 解析代码块
   5. QualityChecker.check 兜底（ruff + ast.parse）
 
@@ -41,6 +41,7 @@ from joker_test.generator.generator import (
 )
 from joker_test.generator.quality import QualityChecker, QualityError
 from joker_test.generator.types import GeneratedTest
+from joker_test.llm.base import build_user_message
 from joker_test.prompts import render_recorded_flow_prompt
 from joker_test.trace import trace_event, trace_stage
 
@@ -124,7 +125,7 @@ class RecordedFlowGenerator:
                         len(prompt), len(images))
 
             # 4. 调 LLM（多模态，喂截图）
-            msg = self._provider.simple_converse(prompt, [], reasoning=16000, images=images or None)
+            msg = self._provider.create(messages=[build_user_message(prompt, images or None)])
             reply_text = _extract_text(msg)
             if not reply_text:
                 raise QualityError("LLM 回复为空，无法解析代码")
@@ -212,7 +213,7 @@ class RecordedFlowGenerator:
             "如果某个文件没有失败，不要输出它。"
         )
 
-        msg = self._provider.simple_converse(prompt, [], reasoning=16000)
+        msg = self._provider.create(messages=[build_user_message(prompt)])
         reply_text = _extract_text(msg)
         if not reply_text:
             logger.warning("回喂重写：LLM 回复为空，返回原版")

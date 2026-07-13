@@ -223,7 +223,7 @@ def test_recorded_flow_round_trip() -> None:
 def test_namer_parses_llm_reply() -> None:
     """LLM 返回 JSON 格式的名字，能正确解析。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [
             {"type": "text", "text": '{"name": "进入地牢流程", "description": "测试主菜单到角色选择"}'}
         ]
@@ -242,7 +242,7 @@ def test_namer_parses_llm_reply() -> None:
 def test_namer_fallback_on_failure() -> None:
     """LLM 失败时回退到时间戳名。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.side_effect = RuntimeError("network error")
+    mock_provider.create.side_effect = RuntimeError("network error")
     namer = FlowNamer(mock_provider)
     flow = RecordedFlow(name="20260708_153000", steps=[])
 
@@ -254,7 +254,7 @@ def test_namer_fallback_on_failure() -> None:
 def test_namer_parses_code_block_json() -> None:
     """LLM 用 ```json 包裹的回复也能解析。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [
             {
                 "type": "text",
@@ -278,7 +278,7 @@ def test_generator_parses_generated_code(tmp_path: Path) -> None:
     from joker_test.generator.types import GeneratedTest  # noqa: PLC0415
 
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [
             {
                 "type": "text",

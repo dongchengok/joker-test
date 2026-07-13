@@ -9,7 +9,10 @@ import json
 import logging
 from typing import Any
 
-from joker_test.llm.base import LLMProvider
+from joker_test.llm.base import (
+    LLMProvider,
+    build_user_message,  # noqa: PLC0415
+)
 from joker_test.pipeline.types import (
     ExecuteResult,
     ExploreConfig,
@@ -117,7 +120,7 @@ class ReflectStage:
             '[{"category": "", "description": "", "severity": "P2"}], '
             '"reasoning": "..."}'
         )
-        msg = self._provider.simple_converse(prompt, [], reasoning=8000)
+        msg = self._provider.create(messages=[build_user_message(prompt)])
         text = _extract_text(msg)
         data = json.loads(text)
         confidence = float(data.get("confidence", 0.5))

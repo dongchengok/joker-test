@@ -70,7 +70,7 @@ def _make_ocr_mock(texts: list[str]) -> MagicMock:
 def _make_llm_mock() -> MagicMock:
     """造一个 LLM mock，simple_converse 返回带文本 content 的消息。"""
     mock = MagicMock()
-    mock.simple_converse.return_value = {
+    mock.create.return_value = {
         "content": [{"type": "text", "text": '{"description": "主菜单", "elements": []}'}]
     }
     return mock

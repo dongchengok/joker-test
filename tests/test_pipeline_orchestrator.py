@@ -17,7 +17,7 @@ from joker_test.pipeline.types import ExploreConfig
 def _reflect_provider() -> MagicMock:
     """反思阶段需要的 LLM 回复。"""
     mock = MagicMock()
-    mock.simple_converse.return_value = {
+    mock.create.return_value = {
         "content": [
             {"type": "text", "text": '{"confidence": 0.7, "risks": [], "reasoning": "ok"}'}
         ]
@@ -52,7 +52,7 @@ def test_branch_reuse_hit(tmp_path: Path) -> None:
 def test_branch_explore_only(tmp_path: Path) -> None:
     """直出分支：solidify=False → 不固化不执行。"""
     explore_provider = MagicMock()
-    explore_provider.simple_converse.return_value = {
+    explore_provider.create.return_value = {
         "content": [{"type": "text", "text": '{"hit": false, "reason": "无"}'}]
     }
     cfg = ExploreConfig(

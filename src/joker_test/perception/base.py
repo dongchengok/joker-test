@@ -28,7 +28,8 @@ if TYPE_CHECKING:
 class PerceptionResult(BaseModel):
     """多层识别的汇总结果。"""
 
-    texts: list[str] = []  # OCR 文本
+    texts: list[str] = []  # OCR 文本（纯文字列表，向后兼容）
+    text_elements: list[dict[str, Any]] = []  # OCR 文字+坐标 [{"text":..,"x":cx,"y":cy}, ...]
     matches: list[MatchResult] = []  # 图像匹配命中（match 层产出）
     description: str = ""  # LLM 语义描述（可选，LLM 层产出）
     ui_elements: list[dict[str, Any]] = []  # LLM 识别的可交互元素 [{"text":..,"type":..,"action":..}]
@@ -49,7 +50,7 @@ class PerceptionEngine:
     用法::
         engine = PerceptionEngine(
             ocr=RapidOCRProvider(),
-            llm=MiMoProvider(),
+            llm=AnthropicProvider(),
             use_llm=True,
             matcher=ImageMatcher(threshold=0.8),
         )
@@ -131,16 +132,14 @@ class PerceptionEngine:
         success, buf = cv2.imencode(".png", frame)
         if not success:
             return "", []
-        # TODO: img_b64 当前未传入 simple_converse（LLM 识图层实际未看图）。
-        # 需扩展 LLMProvider.simple_converse 支持 image block，或在 converse 里拼 messages。
-        # 本任务（加 match 层）不修，避免改 LLM 契约。
-        _ = base64.b64encode(buf.tobytes()).decode("utf-8")
+        img_b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
 
-        # 构造 Anthropic image block（_llm 非 None 已由 _use_llm 保证）
+        from joker_test.llm.base import build_user_message  # noqa: PLC0415
+
         assert self._llm is not None
-        message = self._llm.simple_converse(
-            prompt + "\n\n请用 JSON 回答：{\"description\": \"...\", \"elements\": [{\"text\": \"...\", \"type\": \"button\"}]}",
-            [],
+        full_prompt = prompt + "\n\n请用 JSON 回答：{\"description\": \"...\", \"elements\": [{\"text\": \"...\", \"type\": \"button\"}]}"
+        message = self._llm.create(
+            messages=[build_user_message(full_prompt, [img_b64])],
         )
         # 提取文本
         text = self._extract_text(message)

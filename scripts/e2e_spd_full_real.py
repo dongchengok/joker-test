@@ -60,12 +60,12 @@ uimap_path.write_text(uimap.model_dump_json(indent=2), encoding="utf-8")
 # Step 3: MiMo 生成 testcase
 print("\n[2/5] MiMo 生成 testcase...")
 from joker_test.generator import SmokeTestGenerator, write_tests_to_dir  # noqa: E402
-from joker_test.llm.providers.mimo import MiMoProvider  # noqa: E402
+from joker_test.llm.providers.anthropic import AnthropicProvider
 
 game_meta = json.loads(
     (REPO / "examples" / "e2e_launch_quit" / "game_metadata.json").read_text(encoding="utf-8")
 )
-gen = SmokeTestGenerator(MiMoProvider())
+gen = SmokeTestGenerator(AnthropicProvider())
 tests = gen.generate(uimap, game_meta)
 gen_dir = REPO / "tests" / "generated_smoke"
 gen_paths = write_tests_to_dir(tests, str(gen_dir))

@@ -6,15 +6,16 @@
 from __future__ import annotations
 
 import datetime
-import json
 import logging
-import re
 from typing import Any
 
 from joker_test.explorer.strategy import (
+    EXPLORE_TOOL_SCHEMA,
     ActionResult,
     ExploreContext,
     StepDecision,
+    normalize_action,
+    parse_coords,
 )
 from joker_test.explorer.types import Exit, Screen, StateMap, UIElement
 from joker_test.llm.base import LLMProvider
@@ -84,16 +85,21 @@ class ReactStateStrategy:
         perception: Any,
         ctx: ExploreContext,
     ) -> StepDecision:
-        """ReAct 决策：截图+perception+状态摘要 → LLM → 解析 think/answer。"""
+        """ReAct 决策：截图+perception+状态摘要 → LLM（tool_use）→ 解析。"""
         prompt = self._build_prompt(screenshot, perception, ctx)
+        from joker_test.llm.base import build_user_message  # noqa: PLC0415
+
         try:
-            msg = self._llm.simple_converse(prompt, [], reasoning=8000)
+            msg = self._llm.create(
+                messages=[build_user_message(prompt)],
+                tools=[EXPLORE_TOOL_SCHEMA],
+                tool_choice={"type": "tool", "name": "execute_action"},
+            )
         except Exception as e:  # noqa: BLE001
             _LOGGER.warning("LLM 决策失败：%s", e)
             return StepDecision(think=f"LLM失败:{e}", action="stop", stop=True)
 
-        think, answer_json = self._parse_react(msg)
-        return self._build_decision(think, answer_json)
+        return self._parse_tool_use(msg, screenshot)
 
     def on_action_executed(
         self, decision: StepDecision, result: ActionResult
@@ -108,7 +114,11 @@ class ReactStateStrategy:
         else:
             self._state.stale_count += 1
 
-        target = self._state.quantize_target(decision.action, decision.description)
+        # 去重 key：click 用坐标量化，其他用 target
+        if decision.action == "click" and decision.x is not None:
+            target = f"coord({round(decision.x * 10) / 10:.1f},{round(decision.y * 10) / 10:.1f})"
+        else:
+            target = decision.target or decision.description
         fp = self._state.current_screen_id or "unknown"
         self._state.tried_actions.add((fp, target))
 
@@ -140,9 +150,14 @@ class ReactStateStrategy:
         ]
 
         if perception is not None:
-            texts = getattr(perception, "texts", [])
-            if texts:
-                parts.append("OCR 文本: " + ", ".join(texts[:15]))
+            elements = getattr(perception, "text_elements", [])
+            if elements:
+                lines = [f"  {e['text']}@({e['x']:.2f},{e['y']:.2f})" for e in elements[:15]]
+                parts.append("界面元素(文字@坐标):\n" + "\n".join(lines))
+            else:
+                texts = getattr(perception, "texts", [])
+                if texts:
+                    parts.append("OCR 文本: " + ", ".join(texts[:15]))
 
         if self._state.screens:
             screen_summary = "; ".join(
@@ -158,52 +173,36 @@ class ReactStateStrategy:
             "你在探索一个游戏界面。请推理下一步。\n"
             + "\n".join(parts)
             + "\n\n用 <think>推理</think><answer>{json}</answer> 回答。\n"
-            'json 格式: {"action":"click_text|click_coord|press_key|swipe|scroll|long_press|back|stop",'
-            '"target":"...","description":"...","goal_progress":"...","goal_completed":false}'
+            "动作只能是以下 8 种之一：\n"
+            '1. {"action":"click","target":"按钮文字","description":"..."}\n'
+            '2. {"action":"press_key","target":"escape","description":"..."}\n'
+            '3. {"action":"type_text","target":"文字","description":"..."}\n'
+            '4. {"action":"swipe","target":"up","description":"向上滑动"}\n'
+            '5. {"action":"scroll","target":"down","description":"向下翻页"}\n'
+            '6. {"action":"long_press","target":"图标描述","description":"..."}\n'
+            '7. {"action":"back","description":"返回上级"}\n'
+            '8. {"action":"stop","description":"目标完成"}\n'
+            "规则：click 的 target 是按钮文字，不要输出坐标，不要点全屏/关闭按钮。"
         )
         return prompt
 
-    def _parse_react(self, msg: Any) -> tuple[str, dict[str, Any]]:
-        """解析 <think>...</think><answer>{json}</answer>。"""
-        text = self._extract_text(msg)
-
-        think = ""
-        think_match = re.search(r"<think>(.*?)</think>", text, re.DOTALL)
-        if think_match:
-            think = think_match.group(1).strip()
-
-        answer_raw = ""
-        answer_match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL)
-        if answer_match:
-            answer_raw = answer_match.group(1).strip()
-
-        try:
-            answer = json.loads(answer_raw)
-        except json.JSONDecodeError:
-            answer = {"action": "stop", "description": f"解析失败: {answer_raw[:100]}"}
-
-        return think, answer
-
-    def _build_decision(
-        self, think: str, answer: dict[str, Any]
-    ) -> StepDecision:
-        action = answer.get("action", "stop")
-        target = answer.get("target", "")
-        desc = answer.get("description", target)
-        if action == "click_coord" and target:
-            desc = target
-        return StepDecision(
-            think=think,
-            action=action,
-            stop=action == "stop",
-            goal_progress=answer.get("goal_progress", ""),
-            goal_completed=answer.get("goal_completed", False),
-            description=desc,
-        )
-
-    @staticmethod
-    def _extract_text(msg: Any) -> str:
+    def _parse_tool_use(self, msg: Any, screenshot: Any = None) -> StepDecision:
+        """从 LLM 回复的 tool_use block 提取结构化动作。"""
         for block in msg.get("content", []):
-            if isinstance(block, dict) and "text" in block:
-                return block["text"]
-        return ""
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                inp = block.get("input", {})
+                action = normalize_action(inp.get("action", "stop"))
+                target = inp.get("target", "")
+                x, y = parse_coords(inp, screenshot)
+                return StepDecision(
+                    think=inp.get("think", ""),
+                    action=action,
+                    stop=action == "stop",
+                    goal_progress=inp.get("goal_progress", ""),
+                    goal_completed=inp.get("goal_completed", False),
+                    target=target,
+                    x=x,
+                    y=y,
+                    description=target,
+                )
+        return StepDecision(think="无 tool_use block", action="stop", stop=True)

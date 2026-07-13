@@ -7,7 +7,7 @@
 
 设计要点：
 - 状态自洽：Tracer 只持自己的状态（trace 目录、当前 stage），不依赖外部
-- 轻量：不侵入业务代码，用 contextmanager + 装饰器模式（TracingProvider）
+- 轻量：不侵入业务代码，用 contextmanager + 装饰器模式（provider 内置 trace）
 - 可读：人类可读的单文件 HTML（折叠卡片）+ 机器可读的 jsonl 事件流
 
 产物结构（一次运行一个目录，时间戳在前可排序）::
@@ -252,8 +252,50 @@ class Tracer:
 
         return summary
 
+    # 事件类型 → 图标
+    _ICONS = {
+        "stage_start": "▶",
+        "stage_end": "■",
+        "llm_call": "🤖",
+        "error": "❌",
+        "perceive": "🔍",
+        "explore_think": "🧠",
+        "dispatch_click": "👆",
+        "dispatch_swipe": "↔️",
+        "dispatch": "⚙️",
+        "action_result": "⚡",
+        "repeat_warning": "🔁",
+    }
+
+    @staticmethod
+    def _status_light(etype: str, data: dict[str, Any]) -> str:
+        """根据事件类型和内容返回状态灯。
+
+        🟢 成功/有效  🔴 失败/错误  🟡 不确定/中性  ⚪ 无状态（纯信息）
+        """
+        if etype == "dispatch_click":
+            return "🟢" if data.get("success") else "🔴"
+        if etype == "dispatch_swipe":
+            return "🟢"
+        if etype == "dispatch":
+            return "🟢"
+        if etype == "action_result":
+            ok = data.get("success", False)
+            changed = data.get("screen_changed", False)
+            if not ok:
+                return "🔴"
+            return "🟢" if changed else "🟡"
+        if etype == "error":
+            return "🔴"
+        if etype == "llm_call":
+            return "🟢"
+        if etype == "repeat_warning":
+            return "🟡"
+        # perceive / explore_think / stage_* 是中性信息
+        return "⚪"
+
     def _render_html(self, total_duration: float, llm_count: int, error_count: int) -> str:
-        """渲染单文件 HTML trace（摘要时间线 + LLM 折叠卡片）。"""
+        """渲染单文件 HTML trace（统一时间线，每个事件都是可折叠卡片）。"""
         # ---- 摘要区 ----
         summary_html = (
             f"<div class='summary'>总耗时 <b>{total_duration}s</b> "
@@ -262,63 +304,137 @@ class Tracer:
             f"&nbsp;|&nbsp; <span class='err'>错误 <b>{error_count}</b></span></div>"
         )
 
-        # ---- 时间线区 ----
-        timeline: list[str] = []
-        for ev in self._events:
-            elapsed = ev["elapsed_s"]
-            stage = ev["stage"] or "-"
-            etype = ev["type"]
-            data = ev["data"]
-            if etype == "stage_start":
-                timeline.append(f"<li><code>[{elapsed:>6}s]</code> <b>▶ {html.escape(str(data['stage']))}</b></li>")
-            elif etype == "stage_end":
-                timeline.append(
-                    f"<li><code>[{elapsed:>6}s]</code> <b>■ {html.escape(str(data['stage']))}</b> "
-                    f"({data['duration_s']}s)</li>"
-                )
-            elif etype == "llm_call":
-                ci = data.get("call_idx", "?")
-                timeline.append(
-                    f"<li><code>[{elapsed:>6}s]</code> 🤖 "
-                    f"<a href=\"#call-{ci}\">#{ci}</a> "
-                    f"<span class='stage-tag'>{html.escape(str(stage))}</span> "
-                    f"{html.escape(str(data['prompt_summary'])[:60])} → "
-                    f"{html.escape(str(data['reply_summary'])[:60])} "
-                    f"({data['duration_s']}s)</li>"
-                )
-            elif etype == "error":
-                timeline.append(
-                    f"<li><code>[{elapsed:>6}s]</code> <span class='err'>❌ ERROR</span>: "
-                    f"{html.escape(str(data.get('error', '')))}</li>"
-                )
-            else:
-                timeline.append(
-                    f"<li><code>[{elapsed:>6}s]</code> [{html.escape(str(stage))}] "
-                    f"{html.escape(etype)}: {html.escape(json.dumps(data, ensure_ascii=False)[:120])}</li>"
-                )
-
-        # ---- LLM 调用详情区（折叠卡片，内联完整 prompt/reply）----
+        # ---- 统一时间线：每个事件一张可折叠卡片 ----
+        llm_lookup = {c["idx"]: c for c in self._llm_calls}
         cards: list[str] = []
-        for call in self._llm_calls:
-            prompt_escaped = html.escape(call["prompt_full"] or "(空)")
-            reply_escaped = html.escape(call["reply_full"] or "(空)")
-            cards.append(f"""
-<details class="llm-card" id="call-{call['idx']}">
-  <summary># {call['idx']} · <span class="stage-tag">{html.escape(str(call['stage']))}</span>
-    · {html.escape(call['model'])} · {call['duration_s']}s
-    <span class="hint">（点击展开完整 prompt/reply）</span></summary>
-  <div class="grid">
-    <div><h4>Prompt ({len(call['prompt_full'])} 字)</h4><pre>{prompt_escaped}</pre></div>
-    <div><h4>Reply ({len(call['reply_full'])} 字)</h4><pre>{reply_escaped}</pre></div>
-  </div>
-</details>""")
+        for ev in self._events:
+            cards.append(self._render_event_card(ev, llm_lookup))
 
         return _HTML_TEMPLATE.format(
             title=html.escape(f"Trace: {self._name}"),
             summary=summary_html,
-            timeline="\n".join(timeline) or "<li>（无事件）</li>",
-            cards="\n".join(cards) or "<p>（无 LLM 调用）</p>",
+            timeline="\n".join(cards) or "<p>（无事件）</p>",
         )
+
+    def _render_event_card(self, ev: dict[str, Any], llm_lookup: dict[int, dict]) -> str:
+        """渲染单个事件为可折叠卡片。summary=缩略，展开=完整细节。"""
+        elapsed = ev["elapsed_s"]
+        stage = ev["stage"] or ""
+        etype = ev["type"]
+        data = ev["data"]
+        icon = self._ICONS.get(etype, "•")
+
+        # ---- 状态灯：🟢成功 🔴失败 🟡不确定 ----
+        light = self._status_light(etype, data)
+
+        # ---- summary 行：时间 + 状态灯 + 图标 + 核心缩略信息 ----
+        summary_parts = [f"<code>[{elapsed:>6}s]</code>", light, icon]
+        if stage:
+            summary_parts.append(f"<span class='stage-tag'>{html.escape(stage)}</span>")
+
+        if etype == "stage_start":
+            summary_parts.append(f"<b>{html.escape(str(data.get('stage', '')))}</b>")
+        elif etype == "stage_end":
+            summary_parts.append(
+                f"<b>{html.escape(str(data.get('stage', '')))}</b> "
+                f"({data.get('duration_s', '?')}s)"
+            )
+        elif etype == "llm_call":
+            ci = data.get("call_idx", "?")
+            summary_parts.append(
+                f"<b>#{ci}</b> {html.escape(str(data.get('model', '')))} "
+                f"<span class='hint'>{data.get('duration_s', '?')}s</span> · "
+                f"{html.escape(str(data.get('prompt_summary', ''))[:50])} → "
+                f"{html.escape(str(data.get('reply_summary', ''))[:50])}"
+            )
+        elif etype == "error":
+            summary_parts.append(
+                f"<span class='err'>{html.escape(str(data.get('error', ''))[:120])}</span>"
+            )
+        elif etype == "perceive":
+            size = data.get("screenshot_size", [])
+            elements = data.get("text_elements", [])
+            texts = data.get("ocr_texts", [])
+            size_str = f"{size[0]}×{size[1]}" if len(size) >= 2 else "?"
+            if elements:
+                elems_str = " ".join(
+                    f"{html.escape(str(e.get('text', '')))[:8]}@({e.get('x', 0):.2f},{e.get('y', 0):.2f})"
+                    for e in elements[:6]
+                )
+                summary_parts.append(
+                    f"step={data.get('step', '?')} 截图={size_str} 元素={len(elements)}项: {elems_str}"
+                )
+            else:
+                summary_parts.append(
+                    f"step={data.get('step', '?')} 截图={size_str} OCR={len(texts)}项"
+                )
+        elif etype == "explore_think":
+            x, y = data.get("x"), data.get("y")
+            coords = f"({x:.2f},{y:.2f})" if x is not None else ""
+            summary_parts.append(
+                f"step={data.get('step', '?')} <b>{html.escape(str(data.get('action', '')))}</b> "
+                f"target={html.escape(str(data.get('target', '') or '(无)'))[:20]} {coords}"
+            )
+        elif etype == "dispatch_click":
+            summary_parts.append(html.escape(str(data.get("path", ""))))
+        elif etype == "dispatch_swipe":
+            frm = data.get("from", [])
+            to = data.get("to", [])
+            summary_parts.append(
+                f"swipe {html.escape(str(data.get('direction', '')))} "
+                f"({frm[0]:.2f},{frm[1]:.2f})→({to[0]:.2f},{to[1]:.2f})"
+            )
+        elif etype == "repeat_warning":
+            summary_parts.append(
+                f"连续重复 {data.get('count', '?')} 次: "
+                f"{html.escape(str(data.get('action_key', '')))} ⚠ {html.escape(str(data.get('hint', '')))}"
+            )
+        elif etype == "action_result":
+            ok = data.get("success", False)
+            changed = data.get("screen_changed", False)
+            diff = data.get("pixel_diff_ratio", 0)
+            if ok and changed:
+                summary_parts.append(f"step={data.get('step', '?')} 界面变化 diff={round(diff, 4)}")
+            elif ok:
+                summary_parts.append(f"step={data.get('step', '?')} 无变化 diff={round(diff, 4)}")
+            else:
+                summary_parts.append(
+                    f"step={data.get('step', '?')} 失败 {html.escape(str(data.get('error', '')))[:60]}"
+                )
+        else:
+            summary_parts.append(
+                f"{html.escape(etype)}: {html.escape(json.dumps(data, ensure_ascii=False)[:100])}"
+            )
+
+        summary_html_str = " ".join(summary_parts)
+
+        # ---- 展开内容：完整 detail ----
+        detail_html = self._render_event_detail(etype, data, llm_lookup)
+
+        return f"""
+<details class="ev-card ev-{html.escape(etype)}">
+  <summary>{summary_html_str}</summary>
+  <div class="ev-detail">{detail_html}</div>
+</details>"""
+
+    def _render_event_detail(
+        self, etype: str, data: dict[str, Any], llm_lookup: dict[int, dict]
+    ) -> str:
+        """渲染事件展开后的完整细节。"""
+        # LLM 调用：展开显示完整 prompt/reply（左右并排）
+        if etype == "llm_call":
+            ci = data.get("call_idx", 0)
+            call = llm_lookup.get(ci, {})
+            prompt_full = call.get("prompt_full", "")
+            reply_full = call.get("reply_full", "")
+            return f"""
+<div class="grid">
+  <div><h4>Prompt ({len(prompt_full)} 字)</h4><pre>{html.escape(prompt_full or "(空)")}</pre></div>
+  <div><h4>Reply ({len(reply_full)} 字)</h4><pre>{html.escape(reply_full or "(空)")}</pre></div>
+</div>"""
+        # 其他事件：完整 JSON dump
+        pretty = json.dumps(data, ensure_ascii=False, indent=2)
+        return f"<pre>{html.escape(pretty)}</pre>"
 
     def _cleanup_old_traces(self) -> None:
         """保留最近 keep 个 trace 目录，删最旧的（按目录名排序=时间序）。
@@ -477,7 +593,7 @@ def trace_llm(
 ) -> None:
     """记录一次 LLM 调用（prompt/reply 摘要 + 完整 dump 内联进 HTML）。
 
-    全局委托。TracingProvider 调这个自动记 LLM 行为。
+    全局委托。provider 内置 trace 调这个自动记 LLM 行为。
     """
     get_tracer().log_llm(
         prompt_summary, reply_summary, duration,
@@ -523,7 +639,7 @@ def _auto_finalize() -> None:
         pass  # atexit 不抛异常
 
 
-# HTML 模板：摘要 + 时间线 + LLM 折叠卡片（单文件自包含）
+# HTML 模板：摘要 + 统一时间线（每个事件可折叠卡片，内联完整详情）
 _HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <title>{title}</title>
@@ -531,32 +647,34 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 body {{ font-family: -apple-system, "Segoe UI", sans-serif; margin: 2em; max-width: 1400px; }}
 .summary {{ margin-bottom: 1.5em; padding: 1em 1.2em; background: #f5f5f5; border-radius: 6px; font-size: 1.05em; }}
 .summary b {{ color: #333; }}
-.llm {{ color: #1565c0; }} .err {{ color: #c62828; }}
+.llm {{ color: #1565c0; }} .err {{ color: #c62828; }} .ok {{ color: #2e7d32; }}
 h2 {{ margin-top: 1.8em; border-bottom: 2px solid #e0e0e0; padding-bottom: 0.3em; }}
-ul.timeline {{ list-style: none; padding-left: 0; font-family: "Consolas", monospace; font-size: 0.92em; }}
-ul.timeline li {{ padding: 3px 0; border-bottom: 1px solid #f0f0f0; }}
-ul.timeline code {{ color: #888; min-width: 6em; display: inline-block; }}
+.timeline {{ font-family: "Consolas", monospace; font-size: 0.92em; }}
+details.ev-card {{ border: 1px solid #e8e8e8; border-radius: 4px; margin: 3px 0; padding: 0; }}
+details.ev-card > summary {{ padding: 5px 10px; cursor: pointer; font-weight: 500; background: #fafafa; border-radius: 4px; line-height: 1.6; }}
+details.ev-card > summary:hover {{ background: #f0f0f0; }}
+details.ev-card[open] > summary {{ border-bottom: 1px solid #e0e0e0; border-radius: 4px 4px 0 0; }}
+details.ev-llm_call > summary {{ background: #f6fbff; }}
+details.ev-error > summary {{ background: #fff5f5; }}
+details.ev-stage_start > summary, details.ev-stage_end > summary {{ background: #f5fff5; }}
+code {{ color: #888; min-width: 6em; display: inline-block; }}
 .stage-tag {{ background: #e3f2fd; color: #1565c0; padding: 1px 6px; border-radius: 3px; font-size: 0.85em; }}
-details.llm-card {{ border: 1px solid #e0e0e0; border-radius: 6px; margin: 0.8em 0; padding: 0; }}
-details.llm-card > summary {{ padding: 0.8em 1em; cursor: pointer; font-weight: 500; background: #fafafa; border-radius: 6px; }}
-details.llm-card > summary:hover {{ background: #f0f0f0; }}
-details.llm-card[open] > summary {{ border-bottom: 1px solid #e0e0e0; border-radius: 6px 6px 0 0; }}
 .hint {{ color: #999; font-weight: normal; font-size: 0.85em; }}
+.ev-detail {{ padding: 0; }}
 .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1em; padding: 1em; }}
 .grid h4 {{ margin: 0 0 0.5em; color: #555; font-size: 0.9em; }}
-.grid pre {{ background: #fafafa; border: 1px solid #eee; border-radius: 4px; padding: 0.8em;
+.grid pre, .ev-detail > pre {{ background: #fafafa; border: 1px solid #eee; border-radius: 4px; padding: 0.8em;
             overflow-x: auto; font-size: 0.82em; line-height: 1.5; max-height: 600px; overflow-y: auto;
-            white-space: pre-wrap; word-break: break-word; }}
+            white-space: pre-wrap; word-break: break-word; margin: 0; }}
+.ev-detail > pre {{ margin: 0; border: none; border-top: 1px solid #eee; border-radius: 0 0 4px 4px; }}
 @media (max-width: 900px) {{ .grid {{ grid-template-columns: 1fr; }} }}
 </style></head><body>
 <h1>{title}</h1>
 {summary}
 <h2>时间线</h2>
-<ul class="timeline">
+<div class="timeline">
 {timeline}
-</ul>
-<h2>LLM 调用详情</h2>
-{cards}
+</div>
 </body></html>
 """
 

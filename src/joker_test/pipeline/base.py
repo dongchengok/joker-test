@@ -139,11 +139,13 @@ def build_orchestrator(
     flow_dir: str | Path = "flows",
 ) -> AgenticOrchestrator:
     """根据 config 构造编排器，注入各 Stage 所需依赖。"""
+    from joker_test.executor import set_active_backend
     from joker_test.executor.backends.fake import FakeBackend
     from joker_test.llm.providers.mock import MockProvider
 
     provider = MockProvider()
     backend = FakeBackend()
+    set_active_backend(backend)
     return AgenticOrchestrator(
         explore=ExploreStage(provider, backend, gen_dir=gen_dir, flow_dir=flow_dir),
         solidify=SolidifyStage(provider, backend, gen_dir=gen_dir),

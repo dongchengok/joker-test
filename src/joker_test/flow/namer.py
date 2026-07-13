@@ -72,7 +72,9 @@ class FlowNamer:
         )
 
         try:
-            msg = self._provider.simple_converse(prompt, [], images=images or None)
+            from joker_test.llm.base import build_user_message  # noqa: PLC0415
+
+            msg = self._provider.create(messages=[build_user_message(prompt, images or None)])
             reply = self._extract_text(msg)
             name, desc = self._parse_name_reply(reply)
             name = self._sanitize_filename(name)

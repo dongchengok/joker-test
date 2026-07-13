@@ -52,7 +52,17 @@ class _AirtestState:
         return [r["text"] for r in self._ocr_results]  # type: ignore[union-attr]
 
     def find_text(self, text: str) -> BBox | None:
+        """查找指定文本的位置。精确匹配优先，降级子串匹配。
+
+        精确匹配避免"设置"误匹配"显示设置"标题（子串 bug）。
+        """
         self._ensure_ocr()
+        # 第一遍：精确匹配（strip 后比，容 OCR 前后空格）
+        text_stripped = text.strip()
+        for r in self._ocr_results:  # type: ignore[union-attr]
+            if r["text"].strip() == text_stripped:
+                return r["bbox"]  # type: ignore[index]
+        # 第二遍：子串匹配降级（精确匹配找不到才用）
         for r in self._ocr_results:  # type: ignore[union-attr]
             if text in r["text"]:
                 return r["bbox"]  # type: ignore[index]

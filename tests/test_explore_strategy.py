@@ -10,7 +10,7 @@ from joker_test.explorer.strategy import (
 
 
 def test_explore_action_literal() -> None:
-    assert "click_text" in ExploreAction.__args__
+    assert "click" in ExploreAction.__args__
     assert "swipe" in ExploreAction.__args__
     assert "back" in ExploreAction.__args__
     assert "stop" in ExploreAction.__args__
@@ -19,7 +19,7 @@ def test_explore_action_literal() -> None:
 
 
 def test_step_decision_defaults() -> None:
-    d = StepDecision(think="测试", action="click_text")
+    d = StepDecision(think="测试", action="click")
     assert d.stop is False
     assert d.goal_progress == ""
     assert d.goal_completed is False

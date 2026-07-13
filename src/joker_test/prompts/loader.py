@@ -176,7 +176,7 @@ def render_recorded_flow_prompt(
     """渲染录制操作流转 test_case 的 prompt（flow 包新增）。
 
     把录制操作流 JSON + 游戏元数据 + 语义化警告注入模板，让 LLM 产出 pytest 代码。
-    截图通过 simple_converse 的 images 参数传，不在 prompt 文本里。
+    截图通过 create 的 images 参数传，不在 prompt 文本里。
 
     Args:
         flow_json: RecordedFlow + 语义化结果序列化后的 JSON 字符串

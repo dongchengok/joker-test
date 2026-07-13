@@ -72,17 +72,10 @@ def wait_spd_window(timeout: float = 30.0) -> bool:
 
 
 def make_llm():
-    """构造带 trace 的 MiMo provider（TracingProvider 包装，自动记录 LLM 调用）。
+    """构造 LLM provider（内置 trace，自动记录 LLM 调用）。"""
+    from joker_test.llm.providers.anthropic import AnthropicProvider  # noqa: PLC0415
 
-    全局 trace 模式：不传 tracer，自动进全局 tracer。
-    """
-    # 读 .env 配置
-    from joker_test.llm.providers.anthropic import load_env  # noqa: PLC0415
-    from joker_test.llm.providers.mimo import MiMoProvider  # noqa: PLC0415
-    from joker_test.llm.providers.tracing import TracingProvider  # noqa: PLC0415
-    cfg = load_env()
-    model = cfg.get("MIMO_MODEL", "mimo-v2.5")
-    return TracingProvider(MiMoProvider(), model=model)
+    return AnthropicProvider()
 
 
 # === 阶段 0：检查 SPD 窗口 ===

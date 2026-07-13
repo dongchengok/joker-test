@@ -50,6 +50,14 @@ class _FakeState:
             self._texts_cache = list(self._texts_map.keys())
         return self._texts_cache
 
+    @property
+    def text_elements(self) -> list[dict]:
+        """文字 + 中心坐标列表（与 AirtestBackend._ocr_results 对齐）。"""
+        return [
+            {"text": t, "bbox": bbox}
+            for t, bbox in self._texts_map.items()
+        ]
+
     def find_text(self, text: str) -> BBox | None:
         return self._texts_map.get(text)
 

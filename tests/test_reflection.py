@@ -67,7 +67,7 @@ def test_review_failure_handles_llm_error() -> None:
     """LLM 调用失败时保守判为真 bug（不轻易推翻测试结论）。"""
 
     class FailingProvider:
-        def simple_converse(self, prompt, messages, *, reasoning=0):
+        def create(self, *, messages, model=None, max_tokens=None, tools=None, tool_choice=None):
             raise RuntimeError("LLM 挂了")
 
     result = TestResult(test=TestCase(name="x"), status="failed", error="err")

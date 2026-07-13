@@ -8,16 +8,14 @@ from joker_test.explorer.strategy import ExploreContext
 
 
 def test_decide_strips_image_from_history() -> None:
-    """LLM 响应后，最后一条 user 消息的图像块被剥离。"""
+    """LLM 响应后，最后一条 user 消息不含图像。"""
     mock_llm = MagicMock()
-    mock_llm.simple_converse.return_value = {
+    mock_llm.create.return_value = {
         "content": [
             {
-                "type": "text",
-                "text": (
-                    "<think>看到主菜单</think>"
-                    '<answer>{"action":"click_text","target":"开始"}</answer>'
-                ),
+                "type": "tool_use",
+                "name": "execute_action",
+                "input": {"action": "click", "target": "开始"},
             }
         ]
     }
@@ -33,17 +31,18 @@ def test_decide_strips_image_from_history() -> None:
         for b in last_user["content"]
     )
     assert not has_image, "历史截图应被剥离"
-    assert decision.action == "click_text"
+    assert decision.action == "click"
 
 
-def test_assistant_repackaged_as_think_answer() -> None:
-    """assistant 消息被重新封装为 <think>/<answer> 格式。"""
+def test_assistant_message_added_to_history() -> None:
+    """assistant 消息被追加到历史。"""
     mock_llm = MagicMock()
-    mock_llm.simple_converse.return_value = {
+    mock_llm.create.return_value = {
         "content": [
             {
-                "type": "text",
-                "text": '<think>推理</think><answer>{"action":"stop"}</answer>',
+                "type": "tool_use",
+                "name": "execute_action",
+                "input": {"action": "stop", "target": ""},
             }
         ]
     }
@@ -55,8 +54,6 @@ def test_assistant_repackaged_as_think_answer() -> None:
 
     assistant_msgs = [m for m in strategy._messages if m["role"] == "assistant"]
     assert len(assistant_msgs) >= 1
-    content = assistant_msgs[-1]["content"]
-    assert "<think>" in content and "<answer>" in content
 
 
 def test_should_stop_on_goal_completed() -> None:

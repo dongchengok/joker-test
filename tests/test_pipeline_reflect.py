@@ -14,7 +14,7 @@ from joker_test.pipeline.types import (
 def test_reflect_with_explore_only() -> None:
     """有探索结果时反思覆盖可信度+风险。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [
             {
                 "type": "text",
@@ -42,7 +42,7 @@ def test_reflect_with_explore_only() -> None:
 def test_reflect_llm_failure_degrades_to_low_confidence() -> None:
     """LLM 失败时降级为低可信度，不阻断。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.side_effect = RuntimeError("network down")
+    mock_provider.create.side_effect = RuntimeError("network down")
     stage = ReflectStage(provider=mock_provider)
     explore = ExploreResult(skipped=False)
     report = ReportResult(
@@ -59,7 +59,7 @@ def test_reflect_llm_failure_degrades_to_low_confidence() -> None:
 def test_reflect_no_crash_on_empty_log() -> None:
     """反思阶段空 explore_log 不崩溃。"""
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [
             {"type": "text", "text": '{"confidence": 0.7, "risks": [], "reasoning": "ok"}'}
         ]

@@ -83,11 +83,11 @@ print("=" * 60)
 from joker_test.generator import SmokeTestGenerator, write_tests_to_dir  # noqa: E402
 
 if LLM_CHOICE == "glm":
-    from joker_test.llm.providers.glm import GLMProvider  # noqa: E402
-    provider = GLMProvider()
+    from joker_test.llm.providers.anthropic import AnthropicProvider
+    provider = AnthropicProvider()
 else:
-    from joker_test.llm.providers.mimo import MiMoProvider  # noqa: E402
-    provider = MiMoProvider()
+    from joker_test.llm.providers.anthropic import AnthropicProvider
+    provider = AnthropicProvider()
 print(f"provider: {type(provider).__name__} (model={provider._model})")  # noqa: SLF001
 
 gen = SmokeTestGenerator(provider)

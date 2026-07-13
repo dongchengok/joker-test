@@ -5,7 +5,7 @@
 - set_tracer(None) 关闭（NoOp 空操作不写文件）
 - atexit 自动收尾（写 events.jsonl/trace.html/summary.json）
 - 显式 trace_finalize 返回 summary
-- TracingProvider 用全局 trace_llm 自动记录 LLM 调用
+- provider 内置 trace 用全局 trace_llm 自动记录 LLM 调用
 - 三个 orchestrator（LLMExplorer/generator/verifier）自动 trace
 
 全局状态注意：每个测试用 _reset_global_tracer() 清理全局状态，避免相互污染。
@@ -206,43 +206,41 @@ def test_events_jsonl_contains_typed_events(tmp_path: Path) -> None:
     _reset_global_tracer()
 
 
-# ============== TracingProvider 用全局 ==============
+# ============== Provider 内置 trace ==============
 
 
-def test_tracing_provider_uses_global(tmp_path: Path) -> None:
-    """TracingProvider(real, model) 不传 tracer，调 simple_converse 后 events.jsonl 含 llm_call。"""
+def test_provider_builtin_trace(tmp_path: Path) -> None:
+    """MockProvider.create 后 events.jsonl 含 llm_call（内置 trace）。"""
     import json  # noqa: PLC0415
 
     _reset_global_tracer()
-    t = trace_mod.Tracer(tmp_path / "traces", name="tp", auto_timestamp=False)
+    t = trace_mod.Tracer(tmp_path / "traces", name="pt", auto_timestamp=False)
     trace_mod.set_tracer(t)
 
-    from joker_test.llm.providers.tracing import TracingProvider  # noqa: PLC0415
+    from joker_test.llm.base import build_user_message
+    from joker_test.llm.providers.mock import MockProvider  # noqa: PLC0415
 
-    inner = MagicMock()
-    inner.simple_converse.return_value = {"content": [{"type": "text", "text": "回复"}]}
-    wrapped = TracingProvider(inner, model="test-model")
-    wrapped.simple_converse("hello", [], reasoning=0)
+    provider = MockProvider()
+    provider.create(messages=[build_user_message("hello")])
 
     trace_mod.trace_finalize()
-    lines = (tmp_path / "traces" / "tp" / "events.jsonl").read_text(encoding="utf-8").strip().split("\n")
+    lines = (tmp_path / "traces" / "pt" / "events.jsonl").read_text(encoding="utf-8").strip().split("\n")
     llm_events = [json.loads(ln) for ln in lines if json.loads(ln)["type"] == "llm_call"]
     assert len(llm_events) == 1
-    assert llm_events[0]["data"]["model"] == "test-model"
+    assert llm_events[0]["data"]["model"] == "mock"
     _reset_global_tracer()
 
 
-def test_tracing_provider_no_trace_when_disabled() -> None:
-    """set_tracer(None) 时 TracingProvider 调用不报错不写文件。"""
+def test_provider_trace_disabled_when_noop() -> None:
+    """set_tracer(None) 时 provider 调用不报错不写文件。"""
     _reset_global_tracer()
     trace_mod.set_tracer(None)
 
-    from joker_test.llm.providers.tracing import TracingProvider  # noqa: PLC0415
+    from joker_test.llm.base import build_user_message
+    from joker_test.llm.providers.mock import MockProvider  # noqa: PLC0415
 
-    inner = MagicMock()
-    inner.simple_converse.return_value = {"content": [{"type": "text", "text": "x"}]}
-    wrapped = TracingProvider(inner, model="m")
-    wrapped.simple_converse("p", [])  # 不报错
+    provider = MockProvider()
+    provider.create(messages=[build_user_message("p")])  # 不报错
     _reset_global_tracer()
 
 
@@ -327,7 +325,7 @@ def test_generator_auto_traces(tmp_path: Path) -> None:
     cv2.imwrite(str(shot), np.zeros((100, 100, 3), dtype=np.uint8))
 
     mock_provider = MagicMock()
-    mock_provider.simple_converse.return_value = {
+    mock_provider.create.return_value = {
         "content": [{"type": "text", "text": (
             "### test_x.py\n```python\nfrom joker_test.executor.base import ExecutorBackend\n\n"
             "def test_x(backend: ExecutorBackend) -> None:\n    assert True\n```\n"
