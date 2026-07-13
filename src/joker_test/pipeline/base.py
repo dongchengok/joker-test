@@ -142,12 +142,25 @@ def build_orchestrator(
     from joker_test.executor import set_active_backend
     from joker_test.executor.backends.fake import FakeBackend
     from joker_test.llm.providers.mock import MockProvider
+    from joker_test.plugins import BUILTIN_PLUGINS, PluginManager
+    from joker_test.plugins.loader import load_plugin
 
     provider = MockProvider()
     backend = FakeBackend()
     set_active_backend(backend)
+
+    # 构建插件管理器
+    plugins = []
+    for name in config.plugins:
+        plugin_cls = BUILTIN_PLUGINS.get(name)
+        if plugin_cls:
+            plugins.append(plugin_cls())
+    if config.plugin_path:
+        plugins.append(load_plugin(config.plugin_path))
+    plugin_manager = PluginManager(plugins)
+
     return AgenticOrchestrator(
-        explore=ExploreStage(provider, backend, gen_dir=gen_dir, flow_dir=flow_dir),
+        explore=ExploreStage(provider, backend, gen_dir=gen_dir, flow_dir=flow_dir, plugin_manager=plugin_manager),
         solidify=SolidifyStage(provider, backend, gen_dir=gen_dir),
         execute=ExecuteStage(),
         report=ReportStage(report_dir=report_dir),

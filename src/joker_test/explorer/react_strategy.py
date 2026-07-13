@@ -74,9 +74,11 @@ class ReactStateStrategy:
         llm: LLMProvider,
         intent: str,
         max_stale: int = 3,
+        plugin_manager: Any = None,
     ) -> None:
         self._llm = llm
         self._max_stale = max_stale
+        self._plugin_manager = plugin_manager
         self._state = ExploreState(goal=intent)
 
     def decide(
@@ -150,14 +152,22 @@ class ReactStateStrategy:
         ]
 
         if perception is not None:
-            elements = getattr(perception, "text_elements", [])
-            if elements:
-                lines = [f"  {e['text']}@({e['x']:.2f},{e['y']:.2f})" for e in elements[:15]]
-                parts.append("界面元素(文字@坐标):\n" + "\n".join(lines))
+            # 有 plugin_manager → 走插件注入界面元素
+            if self._plugin_manager is not None:
+                injected = self._plugin_manager.build_step_text(
+                    screenshot, ctx.backend, ctx, "",
+                )
+                if injected.strip():
+                    parts.append(injected)
             else:
-                texts = getattr(perception, "texts", [])
-                if texts:
-                    parts.append("OCR 文本: " + ", ".join(texts[:15]))
+                elements = getattr(perception, "text_elements", [])
+                if elements:
+                    lines = [f"  {e['text']}@({e['x']:.2f},{e['y']:.2f})" for e in elements[:15]]
+                    parts.append("界面元素(文字@坐标):\n" + "\n".join(lines))
+                else:
+                    texts = getattr(perception, "texts", [])
+                    if texts:
+                        parts.append("OCR 文本: " + ", ".join(texts[:15]))
 
         if self._state.screens:
             screen_summary = "; ".join(

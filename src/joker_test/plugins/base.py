@@ -53,6 +53,38 @@ class GamePlugin(Protocol):
         ...
 
 
+@runtime_checkable
+class AgentPlugin(Protocol):
+    """测试 Agent 插件。通过注入点向探索流程提供信息。
+
+    4 个注入点，每个返回空值 = 该插件不贡献此注入点的内容。
+    实现者只需实现需要的方法，不需要的返回空串/None。
+    """
+
+    name: str
+
+    def inject_system_prompt(self) -> str:
+        """系统提示词注入点（固定，只拼接一次）。
+        告诉 LLM 如何理解本插件提供的信息格式。返回空串 = 不注入。"""
+        ...
+
+    def inject_step(self, screenshot: Any, backend: Any, ctx: Any) -> str:
+        """每轮对话注入点（动态，每步都调）。
+        返回本步要追加到 user message 的文本。返回空串 = 不注入。"""
+        ...
+
+    def inject_action_hint(self, screenshot: Any, backend: Any, ctx: Any) -> str:
+        """动作建议注入点（动态，每步都调）。
+        给 LLM 额外的动作提示。返回空串 = 不注入。"""
+        ...
+
+    def validate(self, decision: Any, result: Any) -> str | None:
+        """校验注入点（动作执行后调）。
+        检查动作结果，返回问题描述（None = 无问题）。
+        反馈文本会注入到下一步的 step_text 让 LLM 自我纠错。"""
+        ...
+
+
 # 默认空插件（无游戏特化时用）
 class DefaultPlugin:
     """默认空插件（无任何游戏特化逻辑）。满足 GamePlugin 协议。"""
@@ -70,4 +102,4 @@ class DefaultPlugin:
         return {}
 
 
-__all__ = ["GamePlugin", "DefaultPlugin"]
+__all__ = ["GamePlugin", "DefaultPlugin", "AgentPlugin"]

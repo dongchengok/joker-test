@@ -28,6 +28,8 @@ class ExploreConfig(BaseModel):
     max_explore_steps: int = 30
     verify_during_solidify: bool = True
     explore_strategy: Literal["react_state", "conversation"] = "conversation"
+    plugins: list[str] = Field(default_factory=lambda: ["ocr"])
+    plugin_path: str | None = None
 
 
 class ExploreResult(BaseModel):

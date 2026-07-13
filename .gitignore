@@ -93,3 +93,6 @@ SpecOps-src/
 # ===== 不要把整个调研目录误传 =====
 # (防止在父目录执行 git add . 时把调研文档拖进来)
 tests/generated_smoke/
+
+# 用户运行时配置（自动生成，不入库）
+joker-test-config.json

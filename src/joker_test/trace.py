@@ -263,6 +263,8 @@ class Tracer:
         "dispatch_click": "👆",
         "dispatch_swipe": "↔️",
         "dispatch": "⚙️",
+        "plugin_inject": "🔌",
+        "plugin_validate": "🔍",
         "action_result": "⚡",
         "repeat_warning": "🔁",
     }
@@ -291,6 +293,8 @@ class Tracer:
             return "🟢"
         if etype == "repeat_warning":
             return "🟡"
+        if etype in ("plugin_inject", "plugin_validate"):
+            return "🟢"
         # perceive / explore_think / stage_* 是中性信息
         return "⚪"
 
@@ -374,6 +378,16 @@ class Tracer:
             summary_parts.append(
                 f"step={data.get('step', '?')} <b>{html.escape(str(data.get('action', '')))}</b> "
                 f"target={html.escape(str(data.get('target', '') or '(无)'))[:20]} {coords}"
+            )
+        elif etype == "plugin_inject":
+            summary_parts.append(
+                f"{html.escape(str(data.get('plugin', '')))} "
+                f"注入 {html.escape(str(data.get('inject_point', '')))} "
+                f"({data.get('length', 0)} 字符)"
+            )
+        elif etype == "plugin_validate":
+            summary_parts.append(
+                f"校验反馈: {html.escape(str(data.get('feedback', ''))[:100])}"
             )
         elif etype == "dispatch_click":
             summary_parts.append(html.escape(str(data.get("path", ""))))

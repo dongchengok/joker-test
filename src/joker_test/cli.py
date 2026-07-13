@@ -67,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
         help="探索策略（conversation=对齐Open-AutoGLM默认 / react_state=ReAct+状态机固定token）",
     )
     p_exp.add_argument("--no-trace", action="store_true")
+    p_exp.add_argument("--config", default="joker-test-config.json",
+                        help="配置文件路径（不存在则自动生成）")
 
     # explore-ui
     p_eu = sub.add_parser("explore-ui", help="探索游戏界面，产出界面地图")
@@ -87,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     p_ra.add_argument("--report-dir", default="reports")
     p_ra.add_argument("--mock", action="store_true", help="用 MockBackend（CI）")
     p_ra.add_argument("--no-trace", action="store_true", help="关闭 trace（默认开启）")
+    p_ra.add_argument("--config", default="joker-test-config.json",
+                       help="配置文件路径（不存在则自动生成）")
 
     # validate（DESIGN §4.6.1，MVP 骨架）
     p_val = sub.add_parser("validate", help="校验 charter JSON 或 testcase Python 文件")
@@ -201,8 +205,10 @@ def _cmd_run_smoke(args: argparse.Namespace) -> int:
 
 def _cmd_explore(args: argparse.Namespace) -> int:
     """智能探索入口：固化命中检查 + 三模式探索 + 可串联固化/执行。"""
+    from joker_test.config import load_config  # noqa: PLC0415
     from joker_test.pipeline import ExploreConfig, build_orchestrator  # noqa: PLC0415
 
+    user_cfg = load_config(args.config)
     cfg = ExploreConfig(
         intent=args.intent,
         mode=args.mode,
@@ -214,6 +220,8 @@ def _cmd_explore(args: argparse.Namespace) -> int:
         backend_name=args.backend,
         max_explore_steps=args.max_steps,
         explore_strategy=args.strategy,
+        plugins=user_cfg.get("plugins", ["ocr"]),
+        plugin_path=user_cfg.get("plugin_path"),
     )
     orch = build_orchestrator(cfg)
     result = orch.run(cfg)

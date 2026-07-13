@@ -68,11 +68,13 @@ class ExploreStage:
         backend: ExecutorBackend,
         gen_dir: str | Path = "tests/generated_smoke",
         flow_dir: str | Path = "flows",
+        plugin_manager: Any = None,
     ) -> None:
         self._provider = provider
         self._backend = backend
         self._gen_dir = Path(gen_dir)
         self._flow_dir = Path(flow_dir)
+        self._plugin_manager = plugin_manager
 
     def run(self, config: ExploreConfig) -> ExploreResult:
         log: list[str] = []
@@ -193,13 +195,14 @@ class ExploreStage:
         from joker_test.explorer.conversation_strategy import ConversationStrategy  # noqa: PLC0415
         from joker_test.explorer.react_strategy import ReactStateStrategy  # noqa: PLC0415
 
+        pm = self._plugin_manager
         if config.explore_strategy == "conversation":
             strategy = ConversationStrategy(
-                llm=self._provider, intent=config.intent
+                llm=self._provider, intent=config.intent, plugin_manager=pm,
             )
         else:
             strategy = ReactStateStrategy(
-                llm=self._provider, intent=config.intent
+                llm=self._provider, intent=config.intent, plugin_manager=pm,
             )
 
         explorer = LLMExplorer(
@@ -208,6 +211,7 @@ class ExploreStage:
             strategy=strategy,
             max_steps=config.max_explore_steps,
             recorder=recorder,
+            plugin_manager=pm,
         )
         state_map = explorer.explore()
         flow = recorder.stop()

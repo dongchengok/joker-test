@@ -39,12 +39,14 @@ class LLMExplorer:
         max_steps: int = 30,
         screenshot_dir: str | Path | None = None,
         recorder: GlobalRecorder | None = None,
+        plugin_manager: Any = None,
     ) -> None:
         self._backend = backend
         self._llm = llm
         self._strategy = strategy
         self._max_steps = max_steps
         self._recorder = recorder
+        self._plugin_manager = plugin_manager
         self._step = 0
         self._screenshot_dir = Path(screenshot_dir) if screenshot_dir else None
         if self._screenshot_dir:
@@ -123,6 +125,15 @@ class LLMExplorer:
             "error": result.error,
         })
         self._strategy.on_action_executed(decision, result)
+
+        # 插件校验：收集反馈注入下一步
+        if self._plugin_manager is not None:
+            feedback = self._plugin_manager.validate(decision, result)
+            if feedback:
+                self._trace("plugin_validate", {"feedback": feedback})
+            # 传给策略用于下一步（策略自己决定怎么用）
+            if hasattr(self._strategy, "_last_validate_feedback"):
+                self._strategy._last_validate_feedback = feedback  # noqa: SLF001
 
         if self._recorder is not None and result.success:
             self._record(decision, result)

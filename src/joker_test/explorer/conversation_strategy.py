@@ -23,12 +23,7 @@ from joker_test.llm.base import LLMProvider, Message
 
 _LOGGER = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """你在探索一个游戏界面，目标是完成任务。每步你看到截图和界面元素信息，推理后输出动作。
-
-界面元素格式：文字@(x,y)，x/y 是归一化坐标[0,1]（左0右1，上0下1），表示该文字在屏幕上的中心位置。
-例如 "设置@(0.50,0.80)" 表示"设置"文字的中心在屏幕水平中间、垂直80%处。
-点击有文字的按钮时，直接用它的坐标作为 click 的 x/y，不需要自己估算。
-点击无文字的图标（如齿轮⚙/喇叭🔊）时，根据截图估算坐标。
+_BASE_PROMPT = """你在探索一个游戏界面，目标是完成任务。每步你看到截图和界面元素信息，推理后输出动作。
 
 用 <think>推理</think><answer>{json}</answer> 回答。json 只能是以下动作之一：
 
@@ -61,14 +56,17 @@ class ConversationStrategy:
         llm: LLMProvider,
         intent: str,
         max_conversation_tokens: int = 8000,
+        plugin_manager: Any = None,
     ) -> None:
         self._llm = llm
         self._intent = intent
         self._max_tokens = max_conversation_tokens
+        self._plugin_manager = plugin_manager
         self._messages: list[Message] = []
         self._screens: list[Screen] = []
         self._goal_completed: bool = False
         self._initialized = False
+        self._last_validate_feedback: str = ""
 
     def decide(
         self,
@@ -78,13 +76,17 @@ class ConversationStrategy:
     ) -> StepDecision:
         """构建 prompt → LLM（tool_use 结构化输出）→ 解析 tool_use block。"""
         if not self._initialized:
+            # 系统提示词：base + 插件注入（无 plugin_manager 时用 _BASE_PROMPT）
+            sys_prompt = _BASE_PROMPT
+            if self._plugin_manager is not None:
+                sys_prompt = self._plugin_manager.build_system_prompt(_BASE_PROMPT)
             self._messages.append(
-                {"role": "system", "content": [{"type": "text", "text": _SYSTEM_PROMPT}]}
+                {"role": "system", "content": [{"type": "text", "text": sys_prompt}]}
             )
             self._initialized = True
 
         img_b64 = self._encode_image(screenshot)
-        step_text = self._build_step_text(perception, ctx)
+        step_text = self._build_step_text(perception, ctx, screenshot)
         images = [img_b64] if img_b64 else None
 
         from joker_test.llm.base import build_user_message  # noqa: PLC0415
@@ -200,10 +202,19 @@ class ConversationStrategy:
             if isinstance(b, dict) and b.get("type") == "text"
         ]
 
-    def _build_step_text(self, perception: Any, ctx: ExploreContext) -> str:
-        parts = [f"目标: {self._intent}", f"步数: {ctx.step}/{ctx.max_steps}"]
+    def _build_step_text(self, perception: Any, ctx: ExploreContext, screenshot: Any = None) -> str:
+        base = f"目标: {self._intent}\n步数: {ctx.step}/{ctx.max_steps}"
+        # 有 plugin_manager → 走插件注入
+        if self._plugin_manager is not None:
+            validate_prefix = ""
+            if self._last_validate_feedback:
+                validate_prefix = f"上一步反馈:\n{self._last_validate_feedback}"
+            return self._plugin_manager.build_step_text(
+                screenshot, ctx.backend, ctx, base, validate_feedback=validate_prefix,
+            )
+        # 无 plugin_manager → 降级到原有逻辑（向后兼容）
+        parts = [base]
         if perception is not None:
-            # 优先用带坐标的 text_elements，让 LLM 直接知道每个文字的中心坐标
             elements = getattr(perception, "text_elements", [])
             if elements:
                 lines = [f"  {e['text']}@({e['x']:.2f},{e['y']:.2f})" for e in elements[:15]]
