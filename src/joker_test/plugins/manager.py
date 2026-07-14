@@ -80,12 +80,18 @@ class PluginManager:
             parts.append(validate_feedback)
         return "\n\n".join(parts)
 
-    def validate(self, decision: Any, result: Any) -> str:
-        """收集所有插件的校验结果，拼成反馈文本。空串 = 无问题。"""
+    def validate(self, decision: Any, result: Any, backend: Any = None) -> str:
+        """收集所有插件的校验结果，拼成反馈文本。空串 = 无问题。
+
+        Args:
+            decision: 本步决策
+            result: 执行结果
+            backend: 当前 backend（透传给插件，供语义校验用）
+        """
         issues: list[str] = []
         for p in self._plugins:
             try:
-                issue = p.validate(decision, result)
+                issue = p.validate(decision, result, backend=backend)
                 if issue:
                     issues.append(f"[{p.name}] {issue}")
             except Exception as e:  # noqa: BLE001

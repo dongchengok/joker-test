@@ -104,14 +104,22 @@ class ReactStateStrategy:
         return self._parse_tool_use(msg, screenshot)
 
     def on_action_executed(
-        self, decision: StepDecision, result: ActionResult
+        self,
+        decision: StepDecision,
+        result: ActionResult,
+        validate_feedback: str = "",
     ) -> None:
-        """动作执行后更新状态。"""
+        """动作执行后更新状态。
+
+        Args:
+            validate_feedback: 插件语义校验反馈（非空 = 插件判定操作无效）
+        """
         if not result.success:
             self._state.stale_count += 1
             return
 
-        if result.screen_changed:
+        # 插件判定操作无效 → 计 stale，即使像素 screen_changed=True
+        if result.screen_changed and not validate_feedback:
             self._state.stale_count = 0
         else:
             self._state.stale_count += 1

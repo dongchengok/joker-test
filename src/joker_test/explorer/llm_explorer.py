@@ -80,6 +80,9 @@ class LLMExplorer:
         if screenshot is None:
             return
 
+        # 截图落盘（trace 诊断必需：LLM 当时到底看到了什么界面）
+        screenshot_path = self._save_screenshot(screenshot, ctx.step)
+
         perception = self._perceive(screenshot)
         # 截图尺寸 + OCR 文本（诊断坐标问题的必需信息）
         try:
@@ -88,6 +91,7 @@ class LLMExplorer:
             sw, sh = 0, 0
         self._trace("perceive", {
             "screenshot_size": [sw, sh],
+            "screenshot_path": str(screenshot_path) if screenshot_path else "",
             "ocr_texts": getattr(perception, "texts", [])[:15],
             "text_elements": getattr(perception, "text_elements", [])[:15],
         })
@@ -123,17 +127,26 @@ class LLMExplorer:
             "screen_changed": result.screen_changed,
             "pixel_diff_ratio": round(result.pixel_diff_ratio, 4),
             "error": result.error,
+            "action": decision.action,
+            "target": decision.target,
+            "x": decision.x,
+            "y": decision.y,
+            "effective": result.success and not result.screen_changed,
         })
-        self._strategy.on_action_executed(decision, result)
 
-        # 插件校验：收集反馈注入下一步
+        # 插件校验（先于 on_action_executed）：语义判断操作是否有效，
+        # 反馈传给策略供 stale_count 判断 + 注入下一步 prompt
+        validate_feedback = ""
         if self._plugin_manager is not None:
-            feedback = self._plugin_manager.validate(decision, result)
-            if feedback:
-                self._trace("plugin_validate", {"feedback": feedback})
-            # 传给策略用于下一步（策略自己决定怎么用）
+            validate_feedback = self._plugin_manager.validate(
+                decision, result, backend=self._backend
+            )
+            if validate_feedback:
+                self._trace("plugin_validate", {"feedback": validate_feedback})
             if hasattr(self._strategy, "_last_validate_feedback"):
-                self._strategy._last_validate_feedback = feedback  # noqa: SLF001
+                self._strategy._last_validate_feedback = validate_feedback  # noqa: SLF001
+
+        self._strategy.on_action_executed(decision, result, validate_feedback=validate_feedback)
 
         if self._recorder is not None and result.success:
             self._record(decision, result)
@@ -166,7 +179,12 @@ class LLMExplorer:
         return None
 
     def _perform_action(self, decision: StepDecision) -> ActionResult:
-        """执行动作 + 等待界面稳定 + 检测变化。"""
+        """执行动作 + 等待界面稳定 + 检测变化。
+
+        变化检测只做通用的像素 diff（引擎无关，不含任何 OCR/游戏特化知识）。
+        语义层的变化判断（"OCR 文本是否变了"等）交给插件的 validate 注入点，
+        避免把感知知识硬编码进执行循环（ADR-013）。
+        """
         before = self._backend.screenshot()
         success = True
         error: str | None = None
@@ -212,18 +230,21 @@ class LLMExplorer:
                     dx, dy = 0.3, 0    # 向右拖：x 增大
                 elif "down" in direction:
                     dx, dy = 0, 0.4    # 向下拖：y 增大
+                elif "up" in direction:
+                    dx, dy = 0, -0.4   # 向上拖：y 减小
                 else:
-                    dx, dy = 0, -0.4   # 默认向上
+                    # 方向未指定但给了坐标 → 默认水平拖（滑块最常见的操作）
+                    dx, dy = -0.3, 0
                 self._backend.swipe(x, y, x + dx, y + dy)
                 self._trace("dispatch_swipe", {
                     "from": [round(x, 3), round(y, 3)],
                     "to": [round(x + dx, 3), round(y + dy, 3)],
-                    "direction": direction or "up",
+                    "direction": direction or "left(default)",
                 })
             else:
                 self._backend.swipe(0.5, 0.7, 0.5, 0.3)
                 self._trace("dispatch_swipe", {
-                    "from": [0.5, 0.7], "to": [0.5, 0.3], "direction": "fullscreen",
+                    "from": [0.5, 0.7], "to": [0.5, 0.3], "direction": "fullscreen_up",
                 })
         elif act == "scroll":
             direction = decision.target or "down"
@@ -343,6 +364,28 @@ class LLMExplorer:
                 time.sleep(0.5)
         return None
 
+    def _save_screenshot(self, screenshot: Any, step: int) -> Path | None:
+        """把截图落盘到 screenshot_dir（trace 诊断必需，不报错中断主流程）。
+
+        Args:
+            screenshot: BGR ndarray 截图
+            step: 当前步数（用于文件名）
+
+        Returns:
+            保存路径；screenshot_dir 未配置或保存失败时返回 None
+        """
+        if self._screenshot_dir is None:
+            return None
+        try:
+            import cv2  # noqa: PLC0415
+
+            path = self._screenshot_dir / f"step_{step:03d}.png"
+            cv2.imwrite(str(path), screenshot)
+            return path
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning("截图落盘失败 step=%d", step, exc_info=True)
+            return None
+
     @staticmethod
     def _action_key(decision: StepDecision) -> str:
         """生成动作指纹用于重复检测（坐标量化到 0.05 精度）。"""
@@ -358,7 +401,7 @@ class LLMExplorer:
         return ""  # 其他动作不跟踪
 
     def _detect_change(self, before: Any, after: Any) -> tuple[bool, float]:
-        """检测界面变化。"""
+        """检测界面像素变化（通用，引擎无关）。"""
         try:
             from joker_test.explorer.detection import has_screen_changed  # noqa: PLC0415
 

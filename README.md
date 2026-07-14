@@ -10,7 +10,7 @@
 
 ## 状态
 
-🚧 **Pre-Alpha**：M0-M6 雏形已完成（Charter 生成、冒烟链路、UI/LLM 探索器、M4 简化探索引擎、插件系统、Reporter、CLI、PerceptionEngine、操作录制、全局 Tracer）。完整三层异步引擎 / Investigator / Meta-CoT Judge / MCP Server 为规划态。路线图见 [docs/roadmap/iteration-roadmap.md](./docs/roadmap/iteration-roadmap.md)。
+🚧 **Pre-Alpha**：M0-M6 雏形已完成（Charter 生成、冒烟链路、UI/LLM 探索器、探索流水线、AgentPlugin 插件系统、Reporter、CLI、PerceptionEngine、操作录制、全局 Tracer、配置文件系统）。完整三层异步引擎 / Investigator / Meta-CoT Judge / MCP Server 为规划态。路线图见 [docs/roadmap/iteration-roadmap.md](./docs/roadmap/iteration-roadmap.md)。
 
 | 模块 | 状态 |
 |---|---|
@@ -18,13 +18,14 @@
 | 冒烟测试（Python + pytest + Backend 抽象） | ✅ 已实现（`generator/` + `runner.py` + `executor/`） |
 | UI 探索器（DFS + UIMap） | ✅ 已实现（`explorer/`） |
 | LLM 探索器（截图理解 + 决策） | ✅ 已实现（`explorer/llm_explorer.py`） |
-| M4 简化探索引擎（战术 + 确定性 Judge） | ✅ 已实现（`tactics.py` + `exploratory.py`） |
+| 探索流水线（pipeline 包，5 Stage） | ✅ 已实现（`pipeline/`） |
 | 反思（卡死检测 + 误报审查） | ✅ 已实现（`reflection.py`） |
-| 插件系统（GamePlugin Protocol） | ✅ 已实现（`plugins/`） |
+| AgentPlugin 插件系统（4 注入点 + 异常隔离 + 配置文件） | ✅ 已实现（`plugins/`） |
 | Reporter（Json/Html/Multi） | ✅ 已实现（`reporters/`） |
 | PerceptionEngine（OCR + 图像匹配 + LLM 识图） | ✅ 已实现（`perception/`） |
 | 操作录制→生成 test_case（flow 包） | ✅ 已实现（`flow/`） |
-| CLI（6 子命令） | ✅ 已实现（`cli.py`） |
+| 配置文件系统（joker-test-config.json） | ✅ 已实现（`config.py`） |
+| CLI（7 子命令） | ✅ 已实现（`cli.py`） |
 | 全局 Tracer（流程跟踪） | ✅ 已实现（`trace.py`） |
 | 三层异步引擎（L1 60FPS / L2 / L3） | 🚧 规划中 |
 | Investigator + Meta-CoT Judge | 🚧 规划中 |
@@ -139,7 +140,7 @@ joker-test generate-charter \
 
 ```
 joker-test/
-├── DESIGN.md                       # 架构设计文档(v0.8)
+├── DESIGN.md                       # 架构设计文档(v1.0)
 ├── README.md                       # 本文件
 ├── CLAUDE.md / AGENTS.md           # 工作指引（agent 用）
 ├── LICENSE                         # Apache-2.0
@@ -147,22 +148,22 @@ joker-test/
 ├── .gitignore
 ├── src/joker_test/                 # 全链路已实现（M0-M6）
 │   ├── charter_gen.py              # Charter 生成（LLM）
-│   ├── cli.py                      # CLI 入口（6 子命令）
+│   ├── cli.py                      # CLI 入口（7 子命令）
 │   ├── runner.py                   # pytest 执行 + 结果收集
-│   ├── orchestrator.py             # StaticOrchestrator 编排
+│   ├── config.py                   # 配置文件系统（joker-test-config.json）
 │   ├── reflection.py               # 冒烟+探索反思
-│   ├── tactics.py + exploratory.py # 探索式 bug（战术+Judge+BugReport）
 │   ├── trace.py                    # 全局 Tracer（流程跟踪）
-│   ├── llm/                        # LLM 抽象（Mock/Bedrock/GLM/MiMo/Anthropic）
+│   ├── llm/                        # LLM 抽象（Mock/Anthropic，对齐 anthropic SDK）
 │   ├── executor/                   # Backend 抽象（Fake/Airtest）
 │   ├── ocr/                        # OCR 抽象（RapidOCR）
 │   ├── explorer/                   # 界面探索器（DFS + LLM 探索器）
 │   ├── generator/                  # 用例生成（UIMap→pytest 代码）
+│   ├── pipeline/                   # 探索流水线（5 Stage：explore/solidify/execute/reflect/report）
 │   ├── flow/                       # 操作录制→语义化→test_case
 │   ├── perception/                 # 感知层（OCR+图像匹配+LLM 识图）
 │   ├── reporters/                  # 报告（Json/Html/Multi）
 │   ├── prompts/                    # prompt 工程化（Jinja2+XML+md/yaml）
-│   └── plugins/                    # 插件系统（GamePlugin Protocol）
+│   └── plugins/                    # 插件系统（AgentPlugin + PluginManager，内置 ocr/）
 ├── tests/                          # 测试（smoke/real/generated_smoke，CI 用 FakeBackend）
 ├── examples/                       # 示例数据 + 端到端示例
 ├── scripts/                        # 端到端脚本（e2e_traced.py 等）
@@ -174,10 +175,10 @@ joker-test/
 
 ## 设计文档
 
-完整架构设计见 [DESIGN.md](./DESIGN.md)（v0.8），包含：
+完整架构设计见 [DESIGN.md](./DESIGN.md)（v1.0），包含：
 
-- 核心模块详解（Charter 生成、冒烟测试、探索引擎、报告、插件、CLI）
-- 10 个 ADR（架构决策记录）
+- 核心模块详解（Charter 生成、冒烟测试、探索流水线、报告、插件、CLI）
+- 14 个 ADR（架构决策记录）
 - 数据契约（Charter JSON、Bug 报告、GameState、Reporter）
 - 工程规范（命名/目录/docstring/类型/import/错误处理/日志/测试）
 - 风险与开放问题
@@ -195,11 +196,14 @@ joker-test/
 | **PerceptionEngine** | 多层界面识别（OCR + 图像匹配 + LLM 识图，漏斗） |
 | **TestReporter** | 报告器抽象（Json/Html/Multi 已实现） |
 | **Tracer** | 流程跟踪器（全局惰性，记录 LLM 调用/阶段耗时/事件流） |
-| **Investigator** | 独立验证者（规划中，M4 完整引擎） |
-| **Judge** | 综合判断者（M4 简化版=确定性规则；完整版=Meta-CoT） |
+| **Investigator** | 独立验证者（规划中，完整三层引擎） |
+| **Judge** | 综合判断者（完整版=Meta-CoT，规划中） |
+| **AgentPlugin** | 注入点插件（探索流水线各阶段的扩展点，每次调用异常隔离） |
+| **PluginManager** | 插件管理器（注入点统一调用入口 + 异常隔离） |
+| **ExploreStrategy** | 探索策略 Protocol（conversation / react_state 两种实现） |
 | **Plugin** | 游戏特化扩展（数据/规则/工具/Reporter） |
 
-完整术语表见 [DESIGN.md - 9. 术语表](./DESIGN.md#9-术语表)。
+完整术语表见 [DESIGN.md - 10. 术语表](./DESIGN.md#10-术语表)。
 
 ---
 
@@ -221,8 +225,8 @@ joker-test/
 
 ## 已知限制
 
-1. **依赖 SpecOps-src**：`charter_gen.py` 默认 provider 复用 SpecOps 的 converse.py 调用 Bedrock。可用 `--provider mock` 或注入其他 provider（GLM/MiMo/Anthropic）绕过（参见 DESIGN.md ADR-002）。
-2. **三层引擎简化**：当前是 M4 确定性简化版（战术脚本 + 确定性 Judge），完整三层异步引擎（L1 60FPS/L2/L3）+ Investigator + Meta-CoT Judge 为规划态。
+1. **依赖 SpecOps-src**：`charter_gen.py` 默认 provider 复用 SpecOps 的 converse.py 调用 Bedrock。可通过配置文件切换 provider（如 AnthropicProvider 兼容 MiMo/GLM 等服务），参见 DESIGN.md ADR-002 / ADR-012。
+2. **三层引擎简化**：当前是同步探索流水线（5 Stage），完整三层异步引擎（L1 60FPS/L2/L3）+ Investigator + Meta-CoT Judge 为规划态（ADR-004 / ADR-005）。
 3. **MCP 未实现**：MCP Server 为可选增强（R-ADR-8），主集成方式 = CLI + AGENTS.md。
 4. **真机边界**：AirtestBackend 走 Win32 `PrintWindow` 截图，被完全遮挡/最小化时白屏/黑屏（G7）。
 

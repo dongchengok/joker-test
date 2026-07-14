@@ -280,7 +280,7 @@ def test_explorer_auto_traces(tmp_path: Path) -> None:
                 return StepDecision(think="step1", action="press_key", description="escape")
             return StepDecision(think="done", action="stop", stop=True)
 
-        def on_action_executed(self, decision, result) -> None:
+        def on_action_executed(self, decision, result, validate_feedback: str = "") -> None:
             pass
 
         def should_stop(self) -> bool:
@@ -385,4 +385,196 @@ def test_verifier_auto_traces(tmp_path: Path) -> None:
     types = {json.loads(ln)["type"] for ln in lines}
     assert "verify_round" in types
     assert "verify_pass" in types
+    _reset_global_tracer()
+
+
+# ============== 即时落盘（崩溃保全）==============
+
+
+def test_event_written_immediately_to_jsonl(tmp_path: Path) -> None:
+    """调 trace_event 后不调 finalize，events.jsonl 已有该事件（即时落盘）。"""
+    import json  # noqa: PLC0415
+
+    _reset_global_tracer()
+    t = trace_mod.Tracer(tmp_path / "traces", name="imm", auto_timestamp=False)
+    trace_mod.set_tracer(t)
+    trace_mod.trace_event("step_1", {"action": "click"})
+
+    # 不调 finalize，直接读文件
+    jsonl = tmp_path / "traces" / "imm" / "events.jsonl"
+    assert jsonl.exists(), "events.jsonl 应在 log_event 时即创建"
+    lines = jsonl.read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 1
+    ev = json.loads(lines[0])
+    assert ev["type"] == "step_1"
+    assert ev["data"]["action"] == "click"
+    _reset_global_tracer()
+
+
+def test_llm_dump_written_immediately_to_llm_calls_jsonl(tmp_path: Path) -> None:
+    """调 trace_llm 后不调 finalize，llm_calls.jsonl 已有完整 prompt/reply。"""
+    import json  # noqa: PLC0415
+
+    _reset_global_tracer()
+    t = trace_mod.Tracer(tmp_path / "traces", name="llm_imm", auto_timestamp=False)
+    trace_mod.set_tracer(t)
+    trace_mod.trace_llm(
+        prompt_summary="摘要",
+        reply_summary="回复摘要",
+        duration=1.5,
+        model="test-model",
+        prompt_dump="完整prompt内容",
+        reply_dump="完整reply内容",
+    )
+
+    # 不调 finalize，直接读文件
+    llm_jsonl = tmp_path / "traces" / "llm_imm" / "llm_calls.jsonl"
+    assert llm_jsonl.exists(), "llm_calls.jsonl 应在 log_llm 时即创建"
+    lines = llm_jsonl.read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 1
+    call = json.loads(lines[0])
+    assert call["prompt_full"] == "完整prompt内容"
+    assert call["reply_full"] == "完整reply内容"
+    assert call["model"] == "test-model"
+
+    # events.jsonl 也有 llm_call 摘要
+    ev_jsonl = tmp_path / "traces" / "llm_imm" / "events.jsonl"
+    ev_lines = [json.loads(ln) for ln in ev_jsonl.read_text(encoding="utf-8").strip().split("\n")]
+    llm_events = [e for e in ev_lines if e["type"] == "llm_call"]
+    assert len(llm_events) == 1
+    _reset_global_tracer()
+
+
+def test_crash_preserves_events(tmp_path: Path) -> None:
+    """模拟崩溃：不调 finalize 直接丢弃 tracer，events.jsonl 仍保全全部事件。"""
+    import gc  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    _reset_global_tracer()
+    t = trace_mod.Tracer(tmp_path / "traces", name="crash", auto_timestamp=False)
+    trace_mod.set_tracer(t)
+    trace_mod.trace_event("ev_a", {"n": 1})
+    trace_mod.trace_event("ev_b", {"n": 2})
+    trace_mod.trace_event("ev_c", {"n": 3})
+
+    # 模拟崩溃：直接 GC tracer（不调 finalize）
+    trace_mod.set_tracer(None)
+    del t
+    gc.collect()
+
+    # events.jsonl 应有全部 3 条事件
+    jsonl = tmp_path / "traces" / "crash" / "events.jsonl"
+    assert jsonl.exists()
+    lines = jsonl.read_text(encoding="utf-8").strip().split("\n")
+    types = [json.loads(ln)["type"] for ln in lines]
+    assert types == ["ev_a", "ev_b", "ev_c"]
+    _reset_global_tracer()
+
+
+def test_noop_does_not_create_files(tmp_path: Path, monkeypatch) -> None:
+    """NoOpTracer 模式下不产生任何目录/文件（--no-trace 场景）。"""
+    import json  # noqa: PLC0415
+
+    _reset_global_tracer()
+    monkeypatch.chdir(tmp_path)
+    trace_mod.set_tracer(None)
+    trace_mod.trace_event("x", {})
+    trace_mod.trace_llm("s", "r", 1.0, prompt_dump="p", reply_dump="r")
+    trace_mod.trace_error("err")
+
+    # 不产生任何 trace 文件
+    traces_dir = tmp_path / "traces"
+    assert not traces_dir.exists() or not any(traces_dir.rglob("*"))
+    _reset_global_tracer()
+
+
+# ============== 崩溃后 HTML 重建 ==============
+
+
+def test_rebuild_html_from_crashed_trace(tmp_path: Path) -> None:
+    """崩溃后（有 jsonl 无 html），rebuild_html 能完整重建 trace.html + summary.json。"""
+    import json  # noqa: PLC0415
+
+    _reset_global_tracer()
+    t = trace_mod.Tracer(tmp_path / "traces", name="crashed", auto_timestamp=False)
+    trace_mod.set_tracer(t)
+    trace_mod.trace_event("explore_step", {"step": 0})
+    trace_mod.trace_llm("prompt摘要", "reply摘要", 2.0, model="m", prompt_dump="完整p", reply_dump="完整r")
+    trace_mod.trace_event("explore_end", {"reason": "done"})
+    # 不调 finalize，直接模拟崩溃（丢弃 tracer）
+    trace_mod.set_tracer(None)
+    del t
+
+    crashed_dir = tmp_path / "traces" / "crashed"
+    assert (crashed_dir / "events.jsonl").exists()
+    assert (crashed_dir / "llm_calls.jsonl").exists()
+    assert not (crashed_dir / "trace.html").exists()  # 崩溃了，没 html
+
+    # rebuild_html 从 jsonl 重建
+    html = trace_mod.rebuild_html(crashed_dir)
+    assert html is not None
+    assert html.exists()
+
+    # HTML 含标题
+    html_content = html.read_text(encoding="utf-8")
+    assert "Trace: crashed" in html_content
+
+    # summary.json 含 rebuilt 标记
+    summary = json.loads((crashed_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["rebuilt"] is True
+    assert summary["llm_call_count"] == 1
+    _reset_global_tracer()
+
+
+def test_rebuild_html_returns_none_for_empty_dir(tmp_path: Path) -> None:
+    """无 events.jsonl 的目录 rebuild 返回 None。"""
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    assert trace_mod.rebuild_html(empty_dir) is None
+
+
+# ============== 信号处理器（Ctrl+C / kill 时也渲染 HTML）==============
+
+
+def test_signal_handler_finalizes_on_sigint(tmp_path: Path) -> None:
+    """收到 SIGINT 时，signal handler 先渲染 HTML 再抛 KeyboardInterrupt。
+
+    直接调 _signal_handler 验证（跨平台可靠，不依赖信号投递机制）。
+    """
+    import signal as sig_mod  # noqa: PLC0415
+
+    _reset_global_tracer()
+    trace_mod._finalize_done = False  # noqa: SLF001
+    t = trace_mod.Tracer(tmp_path / "traces", name="sigtest", auto_timestamp=False)
+    trace_mod.set_tracer(t)
+    trace_mod.trace_event("ev_before_signal", {"step": 1})
+
+    # 直接调 signal handler（模拟收到 SIGINT）
+    raised = False
+    try:
+        trace_mod._signal_handler(sig_mod.SIGINT, None)  # noqa: SLF001
+    except KeyboardInterrupt:
+        raised = True
+
+    # handler 渲染了 HTML，并抛出了 KeyboardInterrupt
+    assert raised, "SIGINT handler 应抛出 KeyboardInterrupt"
+    html_path = tmp_path / "traces" / "sigtest" / "trace.html"
+    assert html_path.exists(), "signal handler 应在退出前渲染 HTML"
+    assert "sigtest" in html_path.read_text(encoding="utf-8")
+
+    _reset_global_tracer()
+    trace_mod._finalize_done = False  # noqa: SLF001
+
+
+def test_noop_does_not_register_signal_handlers() -> None:
+    """set_tracer(None) 后信号处理器未被替换（仍是默认 SIG_DFL）。"""
+    import signal as sig_mod  # noqa: PLC0415
+
+    _reset_global_tracer()
+    # 先保存默认处理器
+    default_int = sig_mod.getsignal(sig_mod.SIGINT)
+    trace_mod.set_tracer(None)
+    # NoOp 不注册信号处理器
+    after_int = sig_mod.getsignal(sig_mod.SIGINT)
+    assert after_int == default_int, "NoOp 模式不应替换信号处理器"
     _reset_global_tracer()

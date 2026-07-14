@@ -1,11 +1,10 @@
-"""joker_test.plugins —— 游戏插件系统（DESIGN §4.5，ADR-003）。
+"""joker_test.plugins —— AgentPlugin 插件系统（DESIGN §4.2，ADR-013）。
 
-两套插件：
-- GamePlugin：游戏数据/规则/工具（v0.1 已定义，后续接入）
-- AgentPlugin：探索注入点（系统提示词/每步/动作建议/校验）
+统一一套插件 Protocol：AgentPlugin（4 注入点：系统提示词/每步/动作建议/校验）。
+游戏特化的数据/规则/工具也通过这 4 个注入点提供，不单独定义 GamePlugin。
 """
 
-from joker_test.plugins.base import AgentPlugin, DefaultPlugin, GamePlugin
+from joker_test.plugins.base import AgentPlugin, DefaultAgentPlugin
 from joker_test.plugins.loader import load_plugin
 from joker_test.plugins.manager import PluginManager
 from joker_test.plugins.ocr import OCRPlugin
@@ -16,9 +15,8 @@ BUILTIN_PLUGINS: dict[str, type[AgentPlugin]] = {
 }
 
 __all__ = [
-    "GamePlugin",
-    "DefaultPlugin",
     "AgentPlugin",
+    "DefaultAgentPlugin",
     "PluginManager",
     "OCRPlugin",
     "BUILTIN_PLUGINS",

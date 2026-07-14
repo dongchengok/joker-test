@@ -22,6 +22,8 @@ from joker_test.explorer.llm_explorer import LLMExplorer
 from joker_test.flow.recorder import GlobalRecorder
 from joker_test.llm.providers.anthropic import AnthropicProvider, load_env
 from joker_test.ocr.providers.rapidocr import RapidOCRProvider
+from joker_test.plugins.manager import PluginManager
+from joker_test.plugins.ocr import OCRPlugin
 
 
 def main() -> int:
@@ -55,8 +57,14 @@ def main() -> int:
     recorder = GlobalRecorder(output_dir=flow_dir, backend=backend, pynput_mode=False)
     recorder.start()
 
+    # OCRPlugin：提供 OCR 文字+坐标注入 + 语义变化校验（判断操作是否有效）
+    plugin_manager = PluginManager([OCRPlugin()])
+
     strategy = ConversationStrategy(
-        llm=provider, intent=intent, max_conversation_tokens=16000
+        llm=provider,
+        intent=intent,
+        max_conversation_tokens=16000,
+        plugin_manager=plugin_manager,
     )
 
     explorer = LLMExplorer(
@@ -66,6 +74,7 @@ def main() -> int:
         max_steps=20,
         recorder=recorder,
         screenshot_dir=flow_dir / "screenshots",
+        plugin_manager=plugin_manager,
     )
 
     print(f"\n探索意图: {intent}")

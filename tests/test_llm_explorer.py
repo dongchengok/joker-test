@@ -29,7 +29,7 @@ class _MockStrategy:
         self._idx += 1
         return d
 
-    def on_action_executed(self, decision, result) -> None:
+    def on_action_executed(self, decision, result, validate_feedback: str = "") -> None:
         self.executed.append(decision.action)
 
     def should_stop(self) -> bool:

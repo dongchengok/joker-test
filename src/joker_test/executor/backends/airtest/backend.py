@@ -185,10 +185,11 @@ class AirtestBackend:
         swipe((x1, y1), (x2, y2), duration=duration)
 
     def long_press(self, x: float, y: float, duration: float = 2.0) -> None:
-        """长按（归一化坐标 [0,1]）。"""
-        from airtest.core.api import long_click  # noqa: PLC0415
+        """长按（归一化坐标 [0,1]）。
 
-        long_click(x, y, duration=duration)
+        airtest 无 long_click，用 touch(pos, duration=...) 实现（Windows backend 支持）。
+        """
+        touch((x, y), duration=duration)
 
     # ===== 同步 =====
 

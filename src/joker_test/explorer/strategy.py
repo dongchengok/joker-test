@@ -201,9 +201,18 @@ class ExploreStrategy(Protocol):
         ...
 
     def on_action_executed(
-        self, decision: StepDecision, result: ActionResult
+        self,
+        decision: StepDecision,
+        result: ActionResult,
+        validate_feedback: str = "",
     ) -> None:
-        """动作执行后回调，更新内部状态。"""
+        """动作执行后回调，更新内部状态。
+
+        Args:
+            decision: 本步决策
+            result: 执行结果（像素 diff 层）
+            validate_feedback: 插件语义校验反馈（空串 = 无问题/无插件）
+        """
         ...
 
     def should_stop(self) -> bool:

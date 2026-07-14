@@ -23,7 +23,7 @@ class _StubPlugin:
     def inject_action_hint(self, screenshot, backend, ctx) -> str:
         return self._hint
 
-    def validate(self, decision, result) -> str | None:
+    def validate(self, decision, result, backend=None) -> str | None:
         return self._validate
 
 

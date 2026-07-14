@@ -33,7 +33,9 @@ import datetime
 import html
 import json
 import logging
+import os
 import re
+import signal
 import shutil
 import time
 from collections.abc import Iterator
@@ -96,6 +98,13 @@ class Tracer:
         # LLM 完整内容内联进 HTML（不再写散文件 llm_dumps/）
         self._llm_calls: list[dict[str, Any]] = []
 
+        # 即时落盘：事件/LLM dump 写入即 flush，进程崩溃也不丢
+        # （旧设计攒内存等 finalize 一次性写，崩溃 = 空目录）
+        self._jsonl_path = self._dir / "events.jsonl"
+        self._llm_jsonl_path = self._dir / "llm_calls.jsonl"
+        self._jsonl_file = self._jsonl_path.open("a", encoding="utf-8")
+        self._llm_jsonl_file: Any = None  # 懒打开（首次 log_llm 才建）
+
     @property
     def trace_dir(self) -> Path:
         """本次 trace 的产物目录（用于调用方存截图等附加文件）。"""
@@ -135,14 +144,25 @@ class Tracer:
             self._stage_start = prev_start
 
     def log_event(self, event_type: str, data: dict[str, Any] | None = None) -> None:
-        """记录一个离散事件（程序行为：文件写入、界面切换、断言结果等）。"""
-        self._events.append({
+        """记录一个离散事件（程序行为：文件写入、界面切换、断言结果等）。
+
+        事件即时 append 到 events.jsonl 并 flush，进程崩溃也不丢已发生事件。
+        （旧设计攒内存等 finalize 一次性写，崩溃 = 空目录）
+        """
+        ev = {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "elapsed_s": round(time.monotonic() - self._start_time, 2),
             "stage": self._current_stage,
             "type": event_type,
             "data": data or {},
-        })
+        }
+        self._events.append(ev)
+        # 即时落盘（崩溃保命）
+        try:
+            self._jsonl_file.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            self._jsonl_file.flush()
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning("trace 事件即时落盘失败（type=%s）", event_type, exc_info=True)
 
     def log_llm(
         self,
@@ -155,20 +175,20 @@ class Tracer:
     ) -> None:
         """记录一次 LLM 调用。
 
-        完整 prompt/reply 内联进 trace.html 的折叠卡片（不再产 llm_dumps/ 散文件）。
-        摘要进 events.jsonl（快速浏览）。
+        - 摘要事件即时落盘到 events.jsonl（和 log_event 一样）
+        - 完整 prompt/reply 即时落盘到 llm_calls.jsonl（崩溃不丢）
+        - 完整内容也内联进 trace.html 的折叠卡片（finalize 渲染）
 
         Args:
             prompt_summary: prompt 摘要（前 200 字，给时间线索引）
             reply_summary: 回复摘要（前 200 字，给时间线索引）
             duration: 耗时（秒）
             model: 模型名（如 mimo-v2.5）
-            prompt_dump: 完整 prompt（内联进 HTML 卡片，调试用）
-            reply_dump: 完整回复（内联进 HTML 卡片，调试用）
+            prompt_dump: 完整 prompt（即时落盘 + 内联进 HTML 卡片）
+            reply_dump: 完整回复（即时落盘 + 内联进 HTML 卡片）
         """
         call_idx = len(self._llm_calls) + 1
-        # 完整内容单独存（进 HTML 卡片，不进 jsonl 避免事件流膨胀）
-        self._llm_calls.append({
+        call = {
             "idx": call_idx,
             "stage": self._current_stage,
             "model": model,
@@ -178,58 +198,63 @@ class Tracer:
             "prompt_full": prompt_dump,
             "reply_full": reply_dump,
             "elapsed_s": round(time.monotonic() - self._start_time, 2),
-        })
-        # 事件流只记摘要（程序读用，不含完整 prompt/reply 避免膨胀）
-        self._events.append({
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "elapsed_s": round(time.monotonic() - self._start_time, 2),
-            "stage": self._current_stage,
-            "type": "llm_call",
-            "data": {
-                "call_idx": call_idx,
-                "model": model,
-                "prompt_summary": prompt_summary[:200],
-                "reply_summary": (reply_summary or "(空)")[:200],
-                "duration_s": round(duration, 2),
-                "prompt_chars": len(prompt_dump),
-                "reply_chars": len(reply_dump),
-            },
+        }
+        # 完整内容存内存（渲染 HTML 用）+ 即时落盘到 llm_calls.jsonl（崩溃保命）
+        self._llm_calls.append(call)
+        try:
+            if self._llm_jsonl_file is None:
+                self._llm_jsonl_file = self._llm_jsonl_path.open("a", encoding="utf-8")
+            self._llm_jsonl_file.write(json.dumps(call, ensure_ascii=False) + "\n")
+            self._llm_jsonl_file.flush()
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning("trace LLM dump 即时落盘失败（call_idx=%d）", call_idx, exc_info=True)
+
+        # 摘要进事件流（即时落盘，复用 log_event 的 flush）
+        self.log_event("llm_call", {
+            "call_idx": call_idx,
+            "model": model,
+            "prompt_summary": prompt_summary[:200],
+            "reply_summary": (reply_summary or "(空)")[:200],
+            "duration_s": round(duration, 2),
+            "prompt_chars": len(prompt_dump),
+            "reply_chars": len(reply_dump),
         })
 
     def log_error(self, error: str, context: dict[str, Any] | None = None) -> None:
-        """记录错误/异常（带上下文）。"""
-        self._events.append({
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "elapsed_s": round(time.monotonic() - self._start_time, 2),
-            "stage": self._current_stage,
-            "type": "error",
-            "data": {"error": error, **(context or {})},
-        })
+        """记录错误/异常（带上下文）。即时落盘（复用 log_event）。"""
+        self.log_event("error", {"error": error, **(context or {})})
 
     def finalize(self) -> dict[str, Any]:
         """结束跟踪，写出 trace 文件，返回摘要。
 
         产出（一次运行一个目录）：
-        - trace.html：单文件，人看（摘要时间线 + LLM 折叠卡片内联完整 prompt/reply）
-        - events.jsonl：机器读（事件流，每行一个 JSON）
-        - summary.json：数字摘要
+        - events.jsonl：已由 log_event 即时落盘，finalize 只 flush 尾部 + 关闭句柄
+        - llm_calls.jsonl：已由 log_llm 即时落盘，finalize 只关闭句柄
+        - trace.html：从内存 _events + _llm_calls 渲染（finalize 独有，崩溃则无）
+        - summary.json：数字摘要（finalize 独有，崩溃则无）
 
         写完后自动清理超出 keep 的旧 trace 目录。
+
+        崩溃保证：即使 finalize 没跑到（进程崩溃），events.jsonl 和 llm_calls.jsonl
+        已经在每条事件发生时 flush 到磁盘，不会丢。
         """
         total_duration = round(time.monotonic() - self._start_time, 2)
         llm_count = sum(1 for e in self._events if e["type"] == "llm_call")
         error_count = sum(1 for e in self._events if e["type"] == "error")
 
-        # 1. events.jsonl（机器读）
-        jsonl_path = self._dir / "events.jsonl"
-        with jsonl_path.open("w", encoding="utf-8") as f:
-            for ev in self._events:
-                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        # 1. events.jsonl / llm_calls.jsonl：已即时落盘，只 flush + 关闭句柄
+        self._close_jsonl_files()
 
         # 2. trace.html（人读，单文件，内联完整 prompt/reply）
         html_path = self._dir / "trace.html"
-        html_path.write_text(self._render_html(total_duration, llm_count, error_count),
-                             encoding="utf-8")
+        try:
+            html_path.write_text(
+                self._render_html(total_duration, llm_count, error_count),
+                encoding="utf-8",
+            )
+        except Exception:  # noqa: BLE001
+            # HTML 渲染失败不影响 jsonl（已落盘），只警告
+            _LOGGER.warning("trace.html 渲染失败（事件流已保全）", exc_info=True)
 
         # 3. summary.json
         summary = {
@@ -240,7 +265,7 @@ class Tracer:
             "error_count": error_count,
             "trace_dir": str(self._dir),
             "trace_html": str(html_path),
-            "events_jsonl": str(jsonl_path),
+            "events_jsonl": str(self._jsonl_path),
         }
         (self._dir / "summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -251,6 +276,16 @@ class Tracer:
             self._cleanup_old_traces()
 
         return summary
+
+    def _close_jsonl_files(self) -> None:
+        """flush + 关闭 jsonl 文件句柄（finalize 和崩溃恢复时调）。"""
+        for f in (self._jsonl_file, self._llm_jsonl_file):
+            if f is not None and not f.closed:
+                try:
+                    f.flush()
+                    f.close()
+                except Exception:  # noqa: BLE001
+                    _LOGGER.warning("trace jsonl 句柄关闭失败", exc_info=True)
 
     # 事件类型 → 图标
     _ICONS = {
@@ -374,7 +409,11 @@ class Tracer:
                 )
         elif etype == "explore_think":
             x, y = data.get("x"), data.get("y")
-            coords = f"({x:.2f},{y:.2f})" if x is not None else ""
+            coords = ""
+            if x is not None and y is not None:
+                coords = f"({x:.2f},{y:.2f})"
+            elif x is not None:
+                coords = f"(x={x:.2f})"
             summary_parts.append(
                 f"step={data.get('step', '?')} <b>{html.escape(str(data.get('action', '')))}</b> "
                 f"target={html.escape(str(data.get('target', '') or '(无)'))[:20]} {coords}"
@@ -487,6 +526,83 @@ def clean_traces(traces_dir: str | Path, keep: int = DEFAULT_KEEP) -> int:
     return len(to_delete)
 
 
+def rebuild_html(trace_dir: str | Path) -> Path | None:
+    """从 events.jsonl + llm_calls.jsonl 重建 trace.html（崩溃恢复用）。
+
+    trace.html 是从 _events + _llm_calls 渲染的 derived view，进程崩溃时可能
+    没渲染出来。但 events.jsonl 和 llm_calls.jsonl 是即时落盘的（每条事件发生
+    时就 flush），包含了渲染 HTML 所需的全部数据。本函数从这两个文件重建 HTML。
+
+    供两种场景调用：
+    1. Tracer.__init__ 检测到上次崩溃（有 jsonl 无 html）时自动补渲染
+    2. CLI `python -m joker_test.trace rebuild <dir>` 手动重建
+
+    Args:
+        trace_dir: trace 产物目录（含 events.jsonl）
+
+    Returns:
+        生成的 html 路径；目录无 events.jsonl 时返回 None
+    """
+    trace_dir = Path(trace_dir)
+    jsonl_path = trace_dir / "events.jsonl"
+    if not jsonl_path.exists():
+        return None
+
+    # 加载事件流
+    events: list[dict[str, Any]] = []
+    for line in jsonl_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            events.append(json.loads(line))
+
+    # 加载 LLM 完整 dump（崩溃时可能没生成，容错）
+    llm_calls: list[dict[str, Any]] = []
+    llm_jsonl = trace_dir / "llm_calls.jsonl"
+    if llm_jsonl.exists():
+        for line in llm_jsonl.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                llm_calls.append(json.loads(line))
+
+    if not events:
+        return None
+
+    # 构造临时 Tracer 渲染（复用 _render_html，不建新目录不开新句柄）
+    name = _TRACE_DIR_PATTERN.sub("", trace_dir.name) or trace_dir.name
+    t = Tracer.__new__(Tracer)
+    t._name = name
+    t._events = events
+    t._llm_calls = llm_calls
+    t._start_time = 0.0  # elapsed_s 已在每条事件里，不依赖 _start_time
+
+    total_duration = events[-1]["elapsed_s"] if events else 0.0
+    llm_count = sum(1 for e in events if e["type"] == "llm_call")
+    error_count = sum(1 for e in events if e["type"] == "error")
+
+    html_path = trace_dir / "trace.html"
+    html_path.write_text(
+        t._render_html(total_duration, llm_count, error_count),  # noqa: SLF001
+        encoding="utf-8",
+    )
+
+    # 同步补写 summary.json（崩溃时也没生成）
+    summary = {
+        "name": name,
+        "total_duration_s": total_duration,
+        "event_count": len(events),
+        "llm_call_count": llm_count,
+        "error_count": error_count,
+        "trace_dir": str(trace_dir),
+        "trace_html": str(html_path),
+        "events_jsonl": str(jsonl_path),
+        "rebuilt": True,  # 标记：这是崩溃后重建的，非正常运行产出
+    }
+    (trace_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return html_path
+
+
 # ==================== 全局 tracer（仿 logging 模式）====================
 # 业务代码零参数零感知：直接调 trace_event/trace_stage 等模块级函数，
 # 不用 import get_tracer。首次打点惰性建 Tracer，进程退出 atexit 自动 finalize。
@@ -499,6 +615,8 @@ _DEFAULT_NAME = "run"
 _global_tracer: Tracer | None = None  # 当前 tracer（None=未配置或已关闭）
 _initialized: bool = False  # 区分"还没建"（惰性建）和"主动 set 过"（含 None 关闭）
 _atexit_registered: bool = False  # atexit 只注册一次
+_signal_handlers_registered: bool = False  # 信号处理器只注册一次
+_finalize_done: bool = False  # finalize 幂等：防止 signal handler 和 atexit 重复
 
 
 class _NoOpTracer(Tracer):
@@ -522,6 +640,8 @@ class _NoOpTracer(Tracer):
         self._stage_start = 0.0
         self._start_time = 0.0
         self._llm_calls = []
+        self._jsonl_file = None  # 不打开文件（NoOp 不写盘）
+        self._llm_jsonl_file = None
 
     def log_event(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         """空操作。"""
@@ -540,6 +660,9 @@ class _NoOpTracer(Tracer):
     def log_error(self, error: str, context: dict[str, Any] | None = None) -> None:
         """空操作。"""
 
+    def _close_jsonl_files(self) -> None:
+        """空操作（NoOp 没有文件句柄）。"""
+
     def finalize(self) -> dict[str, Any]:
         """空操作，返回空 dict。"""
         return {}
@@ -557,21 +680,23 @@ def set_tracer(tracer: Tracer | None) -> None:
         tracer: 要用的 Tracer 实例；None = 关闭（get_tracer 返回 _NoOpTracer，
             所有打点空操作不写文件，--no-trace 用）
 
-    非 None 时注册 atexit 自动 finalize（进程退出自动写 trace.html 等）。
+    非 None 时注册 atexit + 信号处理器，保证正常退出/Ctrl+C/kill 都能渲染 HTML。
     """
     global _global_tracer, _initialized, _atexit_registered
     _global_tracer = tracer
     _initialized = True
-    if tracer is not None and not _atexit_registered:
-        atexit.register(_auto_finalize)
-        _atexit_registered = True
+    if tracer is not None:
+        if not _atexit_registered:
+            atexit.register(_auto_finalize)
+            _atexit_registered = True
+        _setup_signal_handlers()
 
 
 def get_tracer() -> Tracer:
     """取全局 tracer。
 
     - 已配置（set_tracer 设过）→ 返回配置的（含 None 关闭时返回 _NoOpTracer）
-    - 未配置且未初始化 → 惰性创建默认 Tracer（首次打点触发）+ 注册 atexit
+    - 未配置且未初始化 → 惰性创建默认 Tracer（首次打点触发）+ 注册 atexit + 信号处理器
     """
     global _global_tracer, _initialized, _atexit_registered
     if _global_tracer is not None:
@@ -585,6 +710,7 @@ def get_tracer() -> Tracer:
     if not _atexit_registered:
         atexit.register(_auto_finalize)
         _atexit_registered = True
+    _setup_signal_handlers()
     return _global_tracer
 
 
@@ -636,21 +762,97 @@ def trace_finalize() -> dict[str, Any]:
     return get_tracer().finalize()
 
 
-def _auto_finalize() -> None:
-    """atexit 回调：惰性建的 tracer 进程退出时自动 finalize（幂等）。
+# ==================== 信号处理器（Ctrl+C / kill 时也渲染 HTML）====================
+# 覆盖场景：SIGINT（Ctrl+C）、SIGTERM（kill PID）、SIGBREAK（Windows Ctrl+Break）
+# 不覆盖：SIGKILL（kill -9，内核直接杀，无法捕获）、断电
+# 兜底：kill -9 / 断电由即时落盘的 jsonl + rebuild_html 兜底
 
-    已 finalize 的 tracer 再调 finalize 是安全的（重新写一遍，内容不变），
-    但为避免重复 I/O，这里检查 _events 为空就不写（NoOp 或已清）。
+
+# 各信号对应的默认退出行为
+_SIGNAL_EXIT = {
+    signal.SIGINT: KeyboardInterrupt,
+}
+# SIGTERM / SIGBREAK 默认行为是 terminate（非异常），需要特殊处理
+if hasattr(signal, "SIGBREAK"):
+    _SIGNAL_EXIT[signal.SIGBREAK] = KeyboardInterrupt  # Windows Ctrl+Break
+
+
+def _signal_handler(signum: int, frame: Any) -> None:
+    """信号处理器：收到 Ctrl+C/kill 时，先 finalize 渲染 HTML，再按原行为退出。
+
+    Python 的 signal handler 在主线程下一次字节码执行时被调用（非异步中断），
+    所以在 handler 里做文件 I/O（写 HTML）是安全的。
+
+    幂等：_auto_finalize 内部通过 _finalize_done 保证只 finalize 一次。
     """
-    global _global_tracer
-    if _global_tracer is None:
+    # 先渲染 HTML（_auto_finalize 内部设 _finalize_done 防重复）
+    try:
+        _auto_finalize()
+    except Exception:  # noqa: BLE001
+        pass  # _auto_finalize 内部已有 stderr 记录
+    # 恢复默认信号处理器，重新抛出信号让进程按原行为退出
+    _restore_default_signal(signum)
+    # SIGINT → KeyboardInterrupt（Python 约定）；SIGTERM/SIGBREAK → SystemExit
+    exc_cls = _SIGNAL_EXIT.get(signum)
+    if exc_cls is not None:
+        raise exc_cls(1)
+    raise SystemExit(128 + signum)
+
+
+def _restore_default_signal(signum: int) -> None:
+    """恢复信号的默认处理器。"""
+    try:
+        signal.signal(signum, signal.SIG_DFL)
+    except (OSError, ValueError):
+        pass  # 某些信号在某些平台不可改（如非主线程）
+
+
+def _setup_signal_handlers() -> None:
+    """注册信号处理器（只注册一次）。
+
+    注册 SIGINT（Ctrl+C）、SIGTERM（kill PID），Windows 额外注册 SIGBREAK。
+    """
+    global _signal_handlers_registered
+    if _signal_handlers_registered:
         return
+    _signal_handlers_registered = True
+    signals = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):
+        signals.append(signal.SIGBREAK)  # type: ignore[attr-defined]
+    for sig in signals:
+        try:
+            signal.signal(sig, _signal_handler)
+        except (OSError, ValueError):
+            pass  # 非主线程或信号不可用时跳过
+
+
+def _auto_finalize() -> None:
+    """atexit 回调：进程退出时自动 finalize（渲染 HTML + summary + 关闭句柄）。
+
+    events.jsonl / llm_calls.jsonl 已由 log_event / log_llm 即时落盘，
+    即使这里抛异常，事件流也不会丢。这里只负责 HTML/summary 渲染 + 句柄关闭。
+
+    幂等：已被 signal handler finalize 过就跳过（_finalize_done）。
+    异常记到 stderr（不再静默吞），让崩溃原因可见。
+    """
+    global _global_tracer, _finalize_done
+    if _global_tracer is None or _finalize_done:
+        return
+    _finalize_done = True
     try:
         # 有事件才 finalize（避免空 trace 目录）
         if _global_tracer._events:  # noqa: SLF001
             _global_tracer.finalize()
-    except Exception:  # noqa: BLE001
-        pass  # atexit 不抛异常
+    except Exception as e:  # noqa: BLE001
+        # atexit 里不能抛异常（会打到 stderr 干扰退出），但记下来让崩溃可见
+        import sys  # noqa: PLC0415
+
+        print(f"[trace] atexit finalize 失败（事件流已落盘保全）: {e}", file=sys.stderr)
+        # 兜底：确保 jsonl 句柄关闭
+        try:
+            _global_tracer._close_jsonl_files()  # noqa: SLF001
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # HTML 模板：摘要 + 统一时间线（每个事件可折叠卡片，内联完整详情）
@@ -696,14 +898,40 @@ code {{ color: #888; min-width: 6em; display: inline-block; }}
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="joker-test trace 清理工具")
-    parser.add_argument("command", choices=["clean"], help="清理旧 trace")
+    parser = argparse.ArgumentParser(description="joker-test trace 工具")
+    parser.add_argument("command", choices=["clean", "rebuild"], help="clean=清理旧 trace / rebuild=从 jsonl 重建 HTML")
     parser.add_argument("--dir", default="traces", help="trace 父目录（默认 traces）")
     parser.add_argument("--keep", type=int, default=DEFAULT_KEEP, help="保留最近 N 个")
+    parser.add_argument("trace_dir", nargs="?", help="rebuild: 指定 trace 目录路径")
     args = parser.parse_args()
     if args.command == "clean":
         deleted = clean_traces(args.dir, keep=args.keep)
         print(f"已清理 {deleted} 个旧 trace，保留最近 {args.keep} 个（{args.dir}）")
+    elif args.command == "rebuild":
+        if args.trace_dir:
+            # 重建指定目录
+            html = rebuild_html(args.trace_dir)
+            if html:
+                print(f"✓ 已重建 {html}")
+            else:
+                print(f"✗ {args.trace_dir} 无 events.jsonl，无法重建")
+        else:
+            # 扫描所有目录，重建有 jsonl 但无 html 的僵尸目录
+            traces_dir = Path(args.dir)
+            recovered = 0
+            for d in sorted(traces_dir.iterdir()):
+                if _is_trace_dir(d):
+                    has_jsonl = (d / "events.jsonl").exists()
+                    has_html = (d / "trace.html").exists()
+                    if has_jsonl and not has_html:
+                        html = rebuild_html(d)
+                        if html:
+                            print(f"✓ 崩溃恢复: {d.name} → {html}")
+                            recovered += 1
+            if recovered:
+                print(f"共恢复 {recovered} 个崩溃的 trace")
+            else:
+                print("无需恢复（所有 trace 目录都有 HTML）")
 
 
 __all__ = [
@@ -711,6 +939,7 @@ __all__ = [
     "Tracer",
     "clean_traces",
     "get_tracer",
+    "rebuild_html",
     "set_tracer",
     "trace_error",
     "trace_event",

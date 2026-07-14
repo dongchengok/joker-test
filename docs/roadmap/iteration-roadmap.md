@@ -34,17 +34,20 @@
 | **反思** | ReflectStage（可信度+风险+误报审查+卡死检测），复用 `reflection.py` | ✅ | `pipeline/stages/reflect.py`、`reflection.py` |
 | **报告** | Json/Html/Multi Reporter + ExploreReporter（综合探索报告） | ✅ | `reporters/` |
 | **执行** | runner.py（pytest inline plugin 收集结果）+ ExecuteStage（脱离 LLM） | ✅ | `runner.py`、`pipeline/stages/execute.py` |
-| **LLM 抽象** | LLMProvider 协议 + Mock/GLM/MiMo/Anthropic/Bedrock + TracingProvider | ✅ | `llm/` |
-| **插件系统** | GamePlugin Protocol + DefaultPlugin + loader | ✅ | `plugins/` |
+| **LLM 抽象** | LLMProvider 协议（对齐 anthropic SDK：create/parse/stream/count_tokens）+ Mock/Anthropic。trace 内置进 provider | ✅ | `llm/` |
+| **插件系统** | AgentPlugin（4 注入点）+ PluginManager（拼接+异常隔离）+ OCRPlugin + BUILTIN_PLUGINS 注册表 + loader | ✅ | `plugins/` |
 | **CLI** | 7 子命令（explore/record/explore-ui/run-smoke/run-all/validate/generate-charter），无参数默认 run-all | ✅ | `cli.py` |
 | **全局 Tracer** | 仿 logging 全局惰性模式，atexit 自动收尾，trace.html + events.jsonl | ✅ | `trace.py` |
+| **trace 重构** | 状态灯（✅/❌/⚠️）+ 统一可折叠时间线 + prompt/reply dump | ✅ | `trace.py` |
+| **配置文件系统** | config.py，joker-test-config.json 自动生成（插件激活/策略选择等） | ✅ | `config.py` |
+| **executor backend 注册** | 全局 backend 注册（set/get_active_backend），跨模块共享活动 backend | ✅ | `executor/` |
 | **真机验证** | SPD（Shattered Pixel Dungeon）全链路真机端到端（探索→生成→执行→报告） | ✅ | `scripts/e2e_*.py`、`tests/real/` |
 
 ### 2.2 架构红线（不可违背）
 
 1. **测试分层**：Python 跑冒烟，LLM 跑探索（DESIGN §2.1）
 2. **LLM 克制**：只在生成/决策/验证的高价值点用 LLM（DESIGN §2.2）
-3. **插件扩展**：游戏特化逻辑走 Python 插件类（ADR-003）
+3. **插件扩展**：游戏数据/规则/工具走 AgentPlugin Python 类（ADR-003/013），通过配置文件选择激活插件
 4. **Backend 抽象**：ExecutorBackend 接口，AirtestBackend 默认（ADR-002）
 5. **Reporter 抽象**：与 Backend 平行，MultiReporter 广播+错误隔离（ADR-009）
 6. **CLI 统一契约**：编排者（人/harness/orchestrator）面向同一套 CLI（R-ADR-6）
@@ -56,6 +59,17 @@
 ## 3. 未来迭代规划
 
 > 基于"探索流水线已落地"的现状，按优先级排列。每个迭代 = 独立 spec → plan → 实现 循环。
+
+### 本轮已完成（不在下述迭代内，滚动记录）
+
+| 任务 | 说明 | 状态 |
+|---|---|---|
+| F1. AgentPlugin 插件系统 | 4 注入点 + PluginManager（拼接+异常隔离）+ OCRPlugin + 配置文件选择激活（ADR-013） | ✅ |
+| F2. LLM 层简化 | 删 Bedrock/GLM/MiMo/Tracing，对齐 anthropic SDK（create/parse/stream/count_tokens），trace 内置进 provider（ADR-012） | ✅ |
+| F3. executor 全局 backend 注册 | set/get_active_backend，跨模块共享活动 backend（ADR-014） | ✅ |
+| F4. OCR 注入 LLM | OCR 识别的文字 + 坐标作为上下文注入 LLM，提升探索决策质量 | ✅ |
+| F5. trace 重构 | 状态灯（✅/❌/⚠️）+ 统一可折叠时间线 + prompt/reply dump | ✅ |
+| F6. parse_coords 参数化 | 从 screenshot.shape 提取尺寸，不再硬编码坐标基准 | ✅ |
 
 ### 迭代 A：真机集成强化（优先级：高）
 
@@ -76,7 +90,7 @@
 
 | 任务 | 说明 | 状态 |
 |---|---|---|
-| B1. LLMExplorer 探索深度 | 重写 LLMExplorer 为策略外壳 + ExploreStrategy 协议（ReactStateStrategy 默认 ReAct+状态机 / ConversationStrategy 对齐 Open-AutoGLM）。目标驱动(intent) + 路径回溯 + 动作空间扩展(swipe/long_press) + StateMap 改名。196 测试全绿。 | ✅ |
+| B1. LLMExplorer 探索深度 | 重写 LLMExplorer 为策略外壳 + ExploreStrategy 协议（ConversationStrategy 默认，对齐 Open-AutoGLM / ReactStateStrategy 对比基准 ReAct+状态机）。目标驱动(intent) + 路径回溯 + 动作空间扩展(swipe/long_press) + StateMap 改名。196 测试全绿。 | ✅ |
 | B2. 固化质量提升 | RecordedFlowGenerator 的语义化准确度（OCR 匹配阈值调优）+ 试跑回喂闭环（TestCaseVerifier 接入 CLI） | ⬜ |
 | B3. 反思维度扩展 | ReflectStage 加入覆盖度评估（UIMap 已探索界面/元素占比）、断言强度分析（值断言>存在性>无断言） | ⬜ |
 | B4. ExploreReporter Html 可视化 | 当前只输出 Json，补 Html（探索轨迹时间线 + 阶段覆盖 + 风险列表） | ⬜ |
@@ -86,7 +100,7 @@
 
 ### 迭代 C：完整三层异步引擎（优先级：中，长期）
 
-> **目标**：从同步流水线升级到三层异步架构（DESIGN §4.3 规划态），支持实时探索。
+> **目标**：从同步流水线升级到三层异步架构（DESIGN §7.1 规划态），支持实时探索。
 
 | 任务 | 说明 | 状态 |
 |---|---|---|
@@ -144,7 +158,7 @@
 
 ### 4.3 SpecOps-src 硬依赖
 
-`charter_gen.py` 运行时硬依赖外部 `SpecOps-src`（调 AWS Bedrock）。查找顺序：`<repo>/SpecOps-src` → `<repo>/../../SpecOps-src` → `$SPECOPS_SRC`。改此依赖前看 DESIGN ADR-002。**独立模式的 LLM provider（GLM/MiMo/Anthropic）不依赖 SpecOps-src**。
+`charter_gen.py` 运行时硬依赖外部 `SpecOps-src`（调 AWS Bedrock）。查找顺序：`<repo>/SpecOps-src` → `<repo>/../../SpecOps-src` → `$SPECOPS_SRC`。改此依赖前看 DESIGN ADR-002。**AnthropicProvider（通过 base_url/model 兼容 MiMo/GLM）不依赖 SpecOps-src**。
 
 ---
 
@@ -154,6 +168,7 @@
 |---|---|---|
 | 2026-07-03 ~ 2026-07-09 | M0-M6 + 探索流水线全部完成。历史 milestone 详解见 git log + DESIGN.md §10 修改记录。 | 多轮开发 |
 | 2026-07-09 | **roadmap 重构**：从 M0-M6 线性 milestone 框架重构为"已完成能力清单 + 未来迭代规划"。已完成部分压缩为状态表（§2），未来按 5 个迭代规划（A 真机集成/B 流水线增强/C 三层引擎/D bug 发现/E 工业化）。删除过时的 M4 战术库/M5 反思/M6 StaticOrchestrator 描述（这些已被 pipeline 取代，见 DESIGN ADR-011）。§9 集成架构精简（核心结论保留，细节见 DESIGN §4.6）。 | pipeline 落地后全文审查 |
+| 2026-07-13 | **能力增强对齐**：AgentPlugin 插件系统（4 注入点 + PluginManager + OCRPlugin + 配置文件，ADR-013）；LLM 层简化（删 Bedrock/GLM/MiMo/Tracing，对齐 anthropic SDK，ADR-012）；trace 重构（状态灯 + 统一可折叠时间线 + prompt/reply dump）；parse_coords 参数化（从 screenshot.shape 提取尺寸，不硬编码）。B1 改为 ConversationStrategy 默认（对齐 Open-AutoGLM），ReactStateStrategy 降为对比基准。 | 代码实现回灌 roadmap |
 
 ---
 
