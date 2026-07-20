@@ -1,20 +1,67 @@
 # AGENTS.md
 
-面向 ZCode agent 的精简工作指引。深度信息见 `DESIGN.md`（v1.0，动手前必读）。
+面向 AI coding agent 的工作指引。假设读者对本项目一无所知。深度架构信息见 `DESIGN.md`（v1.0，动手改架构前必读），模块实现细节见代码 docstring。
 
-## 仓库是什么
+## 1. 项目概览
 
-`joker-test`：面向游戏 QA 的 AI 驱动测试平台。核心理念 **"LLM 用得克制"** —— 冒烟/回归（80%）用 Python+pytest，探索式（15-20%）用 LLM 生成 Charter + 引擎执行。
+`joker-test`：面向游戏 QA 团队的 AI 驱动测试平台（Python 包，src/ layout，Apache-2.0）。核心理念 **"LLM 用得克制"**：
 
-**状态：Pre-Alpha（M0-M6 + 探索流水线 + AgentPlugin 插件系统已完成）**。Charter 生成、冒烟链路（生成+执行）、探索流水线（pipeline 包：探索→固化→执行→报告→反思，AgenticOrchestrator 薄编排 5 个 Stage）、UI 探索器（DFS）、LLM 探索器（agentic loop + 双策略 conversation/react_state）、**AgentPlugin 插件系统**（4 注入点 + PluginManager + OCRPlugin + 配置文件）、Reporter（Json/Html/Multi/Explore）、CLI（7 子命令 + `--config` 配置文件）、PerceptionEngine、操作录制（flow 包）、全局 Tracer（状态灯+统一可折叠时间线）均已实现。完整三层异步引擎 / Investigator / Meta-CoT Judge / MCP Server / AllureReporter 为规划态。路线图见 `docs/roadmap/iteration-roadmap.md`。
+- **冒烟/回归（约 80%）**：纯 Python + pytest，CI 高频跑，不依赖 LLM。
+- **探索式测试（约 15-20%）**：LLM 生成 Charter（探索章程）→ 探索流水线执行 → 固化为 pytest 用例。
 
-## 仓库结构
+**状态：Pre-Alpha**。已实现：Charter 生成、冒烟链路（生成+执行）、探索流水线（pipeline 包，AgenticOrchestrator 薄编排 5 个 Stage：探索→固化→执行→报告→反思）、UI 探索器（DFS）、LLM 探索器（agentic loop + 双策略 conversation/react_state）、AgentPlugin 插件系统（4 注入点 + PluginManager + OCRPlugin）、PerceptionEngine、Reporter（Json/Html/Multi/Explore）、操作录制（flow 包）、全局 Tracer、配置文件系统、CLI（7 子命令）。规划态：完整三层异步引擎 / Investigator / Meta-CoT Judge / MCP Server / AllureReporter。路线图见 `docs/roadmap/iteration-roadmap.md`。
+
+借鉴 SpecOps（ICSE 2026）架构，但测试范式为 charter-driven + Python 冒烟双线（对比见 README / DESIGN.md §1.3）。
+
+## 2. 技术栈
+
+- **语言**：Python，requires-python `>=3.10`；开发 venv 用 3.12。
+- **核心依赖**：pydantic v2、boto3（charter_gen 走 Bedrock）、pillow、Jinja2 + PyYAML（prompt 渲染）、tqdm。
+- **可选 extras**（`pyproject.toml`）：
+  - `dev`：pytest、mypy、ruff
+  - `airtest`：airtest + pocoui + pynput + **numpy<2（必须 pin）**
+  - `ocr`：rapidocr_onnxruntime
+  - `opencv` / `report`（allure）
+- **被测游戏（过渡）**：`.test-targets/SPD/`（Shattered Pixel Dungeon，窗口标题 "Shattered Pixel Dungeon"）。
+- **平台**：主要面向 Windows（Airtest 走 Win32 `PrintWindow` 截图）。
+
+## 3. 环境与常用命令
+
+```bash
+# ⚠️ 开发必须用仓库内 .venv（Python 3.12，已装 airtest+pocoui）。
+# 全局 python 是 3.13，airtest 装不上（numpy<2 冲突）。
+source .venv/Scripts/activate          # Git Bash；CMD/PS 用 .venv\Scripts\activate
+
+pip install -e ".[dev]"                # 安装（含 dev 依赖）
+pytest                                 # 跑全部测试（testpaths=tests）
+pytest tests/test_xxx.py -k name       # 单测
+ruff check src tests                   # lint
+mypy src                               # 类型检查（非 strict）
+
+# Charter 生成（需 SpecOps-src + AWS 凭据，见 §7 陷阱 1）
+python -m joker_test.charter_gen \
+    examples/targets.json examples/game_metadata.json outputs/charters \
+    --ids 1 --personas 破坏狂 贪婪者 --verbose
+
+# 启动过渡被测游戏
+.test-targets/SPD/"Shattered Pixel Dungeon.exe"
+```
+
+入口点：`joker-test = joker_test.cli:main`（pyproject `[project.scripts]`）。
+
+**工具链配置**（`pyproject.toml`）：
+
+- pytest：`testpaths=["tests"]`，`addopts="-ra --strict-markers"`，**`python_classes=[]`（不收集 `Test*` 类）**——reporters 里有 `TestCase`/`TestResult` 等数据模型，写测试时不要新建 `Test*` 开头的类。
+- ruff：line-length=100，target py310，select `E,F,W,I,B,UP`，ignore `E501`；`scripts/*` 豁免 `E402`。
+- mypy：python_version=3.12（对齐 venv 实际版本），非 strict，ignore_missing_imports。ruff 守下限（py310）、mypy 守实际（3.12），两者有意不同。
+
+## 4. 仓库结构与模块划分
 
 ```
-src/joker_test/                # 全链路已实现
-  charter_gen.py               # Charter 生成（Phase 1）
-  cli.py                       # CLI 入口（7 子命令 + --config 配置文件 + 无参数默认 run-all）
-  config.py                    # 配置文件加载（joker-test-config.json 自动生成）
+src/joker_test/
+  charter_gen.py               # Charter 生成（Phase 1，依赖 SpecOps-src 调 Bedrock）
+  cli.py                       # CLI 入口（7 子命令 + --config，无参数默认 run-all）
+  config.py                    # 配置文件加载（joker-test-config.json 不存在时自动生成）
   runner.py                    # pytest 执行 + 结果收集
   reflection.py                # 反思（卡死检测 + 误报审查，ReflectStage 复用）
   trace.py                     # 全局 Tracer（状态灯+统一可折叠时间线，仿 logging 模式）
@@ -22,91 +69,101 @@ src/joker_test/                # 全链路已实现
     types.py                   # 数据契约（ExploreConfig + 5 Result + PipelineResult + Risk）
     base.py                    # Stage Protocol + AgenticOrchestrator + build_orchestrator
     stages/                    # explore（智能入口+命中检查+三模式+插件注入）/ solidify / execute / report / reflect
-  flow/                        # 操作录制+生成（pynput监听→LLM起名→语义化→test_case→试跑验证）
-  llm/                         # LLM 抽象（Protocol 对齐 anthropic SDK + Anthropic + Mock）
-  executor/                    # Backend 抽象（Protocol + 全局注册 set/get_active_backend + Fake/Airtest + coords）
-  ocr/                         # OCR 抽象（Protocol + RapidOCR）
-  explorer/                    # 界面探索器（UIExplorer DFS + LLMExplorer agentic loop + ExploreStrategy 双策略 + StateMap）
-  generator/                   # 用例生成（StateMap→LLM→pytest代码+spec）
-  reporters/                   # 报告（Protocol + Json/Html/Multi + ExploreReporter 综合探索报告）
-  prompts/                     # prompt 工程化（templates/ Jinja2 + data/ yaml + constants/ md 常量，loader 统一加载）
-  plugins/                     # 插件系统（AgentPlugin 4注入点 + PluginManager + OCRPlugin + loader）
-    base.py                    # AgentPlugin Protocol + DefaultAgentPlugin
-    manager.py                 # PluginManager（拼接注入内容 + 异常隔离）
+  flow/                        # 操作录制+生成（pynput 监听→LLM 起名→语义化→test_case→试跑验证）
+  llm/                         # LLM 抽象（base.py Protocol 对齐 anthropic SDK）
+    providers/                 # anthropic/（读 .env 的 MIMO_API_KEY/MIMO_BASE_URL，兼容 MiMo/GLM 端点）+ mock/
+  executor/                    # Backend 抽象（base.py Protocol + coords.py + 全局注册 set/get_active_backend）
+    backends/                  # airtest/（默认，图像识别为核心）+ fake/（CI 用）
+  ocr/                         # OCR 抽象（base.py Protocol + providers/rapidocr/）
+  perception/                  # 感知层（backend 无关）：OCR→match→LLM 三层漏斗
+    matching/                  # image_matcher + _aircv/（vendored aircv 模板匹配）
+  explorer/                    # 界面探索器（UIExplorer DFS + LLMExplorer agentic loop + 双策略 + StateMap）
+  generator/                   # 用例生成（StateMap→LLM→pytest 代码 + Pydantic spec）
+  reporters/                   # 报告（base.py Protocol + explore.py + json/ html/ multi/ 子包）
+  prompts/                     # prompt 工程化（templates/*.md.j2 + data/*.yaml + constants/*.md，loader.py 统一加载）
+  plugins/                     # 插件系统
+    base.py                    # AgentPlugin Protocol（4 注入点）+ DefaultAgentPlugin
+    manager.py                 # PluginManager（拼接注入内容 + 每次调用异常隔离）
+    loader.py                  # 从 .py 文件路径动态加载单个外部插件（MVP）
     ocr/                       # OCRPlugin（内置，从 backend.state 提取文字+坐标）
-examples/e2e_launch_quit/      # 端到端示例（进入退出游戏场景）
-scripts/e2e_spd_explore_conversation.py  # 真 SPD 端到端脚本（ConversationStrategy）
-.test-targets/SPD/             # 过渡被测游戏（Shattered Pixel Dungeon）
-DESIGN.md / AGENTS.md / docs/roadmap/    # 设计文档 + 工作指引 + 迭代路线
-pyproject.toml                 # src/ layout，Python 3.12（venv）
+    __init__.py                # BUILTIN_PLUGINS 注册表（内置插件名→类）
+tests/                         # 单元测试（test_<模块>.py）+ smoke/ + generated_smoke/ + real/
+examples/                      # 示例数据（targets/game_metadata）+ e2e_launch_quit/
+scripts/                       # 端到端脚本（真 SPD，如 e2e_spd_explore_conversation.py）
+docs/roadmap/                  # 迭代路线图
+DESIGN.md                      # 架构权威文档（含 14 条 ADR + 工程规范 §11）
 ```
 
-注意：`tests/` 已建立（smoke/real/generated_smoke/pipeline，CI 用 FakeBackend + MockProvider）。CLI `joker_test.cli:main` 已实现 7 个子命令：`explore`（智能探索入口）/`generate-charter`/`explore-ui`/`run-smoke`/`run-all`（AgenticOrchestrator 流水线）/`validate`/`record`，无参数默认等价 `run-all`。`explore` 支持 `--mode manual|dfs|llm` 三种探索方式 + `--strategy conversation|react_state` 探索策略 + `--config joker-test-config.json` 配置文件（自动生成，含插件列表/后端/策略）。`explore`/`run-all`/`explore-ui`/`record` 支持 `--no-trace` 关闭全局 trace（默认开启，状态灯+统一可折叠时间线，详见 DESIGN.md §11.9）。
+**CLI 7 子命令**（`joker_test.cli:main`，无参数等价 `run-all`）：
 
-## 常用命令
+- `explore`：智能探索入口。`--mode manual|dfs|llm`、`--strategy conversation|react_state`、`--backend airtest|fake`、`--config joker-test-config.json`
+- `generate-charter`：Charter 生成（走 SpecOps-src/Bedrock）
+- `explore-ui`：DFS 探索产出界面地图
+- `run-smoke`：跑冒烟 + 出报告
+- `run-all`：一键编排（AgenticOrchestrator 5 Stage 流水线）
+- `validate`：校验 charter JSON / testcase Python
+- `record`：录制操作流程生成 test_case（`explore --mode manual` 的快捷方式）
 
-```bash
-# ⚠️ 开发环境用 .venv（Python 3.12，已装 airtest+pocoui）
-# 全局 python 是 3.13，airtest 装不上（numpy<2 冲突），务必用 .venv
-source .venv/Scripts/activate          # Git Bash；CMD/PS 用 .venv\Scripts\activate
+`explore`/`run-all`/`explore-ui`/`record` 支持 `--no-trace` 关闭全局 trace（默认开启，atexit 自动收尾）。
 
-pip install -e ".[dev]"                              # 安装（含 dev 依赖）
-pytest                                               # 跑测试（testpaths=tests/）
-pytest tests/test_xxx.py -k name                     # 单测
-ruff check src tests                                 # lint（line-length=100，ignore E501）
-mypy src                                             # 类型检查（非 strict）
+**配置文件**：`joker-test-config.json` 首次运行自动在 cwd 生成（已 gitignore）。字段：`plugins`（内置插件名列表）、`plugin_path`（外部插件 .py）、`explore_strategy`、`max_steps`、`backend_name`、`window_title`、`llm.thinking`。
 
-# 跑 Charter 生成（需 SpecOps-src + AWS 凭据，见下方 footgun）
-python -m joker_test.charter_gen \
-    examples/targets.json examples/game_metadata.json outputs/charters \
-    --ids 1 --personas 破坏狂 贪婪者 --verbose
+## 5. 架构红线（不要违背）
 
-# 启动过渡被测游戏（M1-M5 用）
-.test-targets/SPD/"Shattered Pixel Dungeon.exe"      # 窗口标题 "Shattered Pixel Dungeon"
-```
-
-## ⚠️ 关键陷阱（footgun）
-
-1. **SpecOps-src 硬依赖（charter_gen 专用）**：`charter_gen.py` 运行时依赖外部 `SpecOps-src`（调 AWS Bedrock 生成 Charter）。查找顺序（`charter_gen.py` 顶部约 33-45 行）：`<repo_root>/SpecOps-src` → `<repo_root>/../../SpecOps-src` → `$SPECOPS_SRC` 环境变量。**注意：独立探索流水线（pipeline）不走 SpecOps-src，用 AnthropicProvider（见 .env 配 MiMo/GLM 端点）。** 只有 `generate-charter` 子命令需要 SpecOps-src。
-2. **Windows 编码**：所有 JSON 读写强制 `encoding="utf-8"`。Windows 默认 gbk 会炸，**不要去掉这个参数**。
-3. **字段重命名契约**：`write_charter` 会把 LLM 输出的 `charter_changes_game_state` 转写成 `env_probing_required`（"yes"/"no"）。这是 Phase 1 → Phase 4 的契约，**不要改字段名**。
-4. **日志**：只在 `--verbose` 时启用，写入 `<output_dir>/generation.log`。
-5. **numpy<2 必须 pin**：`.venv` 里 airtest 的 cv2 基于 numpy 1.x ABI。装任何包时若 numpy 被升到 2.x，cv2 立即 `ImportError`。
-6. **airtest title_re 不加引号**：`connect_device("Windows:///?title_re=.*Shattered.*")` —— 正则不要加单引号。
-7. **配置文件自动生成**：首次运行 `explore`/`run-all` 会在 cwd 自动生成 `joker-test-config.json`。已加入 `.gitignore`。
-8. **全局 backend 注册**：`set_active_backend()` 在程序入口调用一次（CLI/conftest/pipeline）。`parse_coords` 无截图时从全局 backend 获取帧尺寸。测试间注意重置。
-
-## 架构红线（不要违背）
-
-1. **测试分层**：Python 跑冒烟，LLM 跑探索。**不要把冒烟测试改成 LLM 驱动**（`DESIGN.md` 2.1）。
-2. **LLM 克制**：只在生成/决策/验证的高价值点用；执行、感知、规则校验一律不用（`DESIGN.md` 2.2）。
-3. **插件扩展**：游戏特化逻辑（数据/规则/工具）走 `AgentPlugin` Python 类（4 注入点，ADR-003/013），通过配置文件选择激活插件列表。
-4. **Backend 抽象**：`ExecutorBackend` 接口，**默认 `AirtestBackend`（图像识别为核心，引擎无关）**，Poco 为 Unity 可选增强。全局注册（ADR-014，`set_active_backend`/`get_active_backend`），跨机器/跨游戏自适应（`parse_coords` 从 `screenshot.shape` 提取尺寸，不硬编码）。
+1. **测试分层**：Python 跑冒烟，LLM 跑探索。**不要把冒烟测试改成 LLM 驱动**（DESIGN §2.1）。
+2. **LLM 克制**：只在生成/决策/验证的高价值点用；执行、感知、规则校验一律不用（§2.2）。
+3. **插件扩展**：游戏特化逻辑走 `AgentPlugin` Python 类（4 注入点：系统提示词/每轮对话/动作建议/校验，ADR-003/013）。加新内置感知能力 = 写一个插件 + 在 `plugins/__init__.py` 的 `BUILTIN_PLUGINS` 注册一行，不改策略代码。
+4. **Backend 抽象**：`ExecutorBackend` 接口，默认 `AirtestBackend`，`FakeBackend` 供 CI。全局注册（ADR-014，`set_active_backend`/`get_active_backend`）。跨分辨率自适应：`parse_coords` 从 `screenshot.shape` 提取尺寸，**不硬编码分辨率**。
 5. **Reporter 抽象**：与 Backend 平行，`MultiReporter` 广播并做错误隔离（ADR-009）。
-6. **CLI 是统一契约，MCP 可选**：编排者都面向同一套 CLI；主集成方式 = CLI + AGENTS.md，MCP 降为可选增强（ADR-006）。
-7. **编排策略可插拔**：独立模式编排走 AgenticOrchestrator（pipeline 包，薄编排 5 个 Stage：探索→固化→执行→报告→反思）。
-8. **感知层 backend 无关**：`perception/` 包是跨 backend 的感知层，**不依赖任何具体 backend**。三层漏斗：OCR（文字）→ match（已知图标）→ LLM（语义兜底）。
-9. **AgentPlugin 注入点**：插件通过 4 个注入点（系统提示词/每轮对话/动作建议/校验）向探索流程提供信息。`PluginManager` 负责拼接+异常隔离。加新感知能力只需写一个插件 + 注册一行（`BUILTIN_PLUGINS`），不改策略代码（ADR-013）。
+6. **CLI 是统一契约，MCP 可选**（ADR-006）：主集成方式 = CLI + AGENTS.md。
+7. **编排可插拔**：独立模式编排走 AgenticOrchestrator（pipeline 包，薄编排 5 Stage）。
+8. **感知层 backend 无关**：`perception/` 不依赖任何具体 backend，三层漏斗 OCR（文字）→ match（已知图标）→ LLM（语义兜底）。
 
-## 工程规范速查（详见 DESIGN.md §11）
+## 6. 工程规范速查（完整版见 DESIGN.md §11，违规会被 review 打回）
 
-动手写代码前必看，违规会被 review 打回。完整规范见 `DESIGN.md` §11.1-11.10。
-
-1. **目录**（§11.1）：有抽象的包 = `__init__.py` + `base.py`（协议）+ `<utils>.py`（公共工具）+ `<impl>/`（每个实现一个子文件夹）。数据驱动包（如 `prompts/`）不套用。
-2. **命名**（§11.2）：类 PascalCase / 函数变量方法 snake_case / 常量 UPPER_SNAKE_CASE / 协议无 `I` 前缀 / 文件 snake_case 默认无前缀。
-3. **私有边界**（§11.3）：`_` 前缀**唯一标准**是"包外会不会直接 import"。会 → 无前缀；不会 → `_`。禁止用 `_` 表达"不重要"。
-4. **导出**（§11.4）：每个 `__init__.py` 用 `__all__` 显式声明，`_` 前缀不导出。**禁 `from x import *`**。
-5. **docstring**（§11.5）：中文 + Google 风格（Args/Returns/Raises）。模块/类/公共函数必须有，私有可简化。标杆：`executor/base.py`。
-6. **类型**（§11.6）：公共 API 必须标注，顶部加 `from __future__ import annotations`。重依赖用 `TYPE_CHECKING` 延迟导入。
+1. **目录**（§11.1）：有抽象的包 = `__init__.py` + `base.py`（协议）+ 公共工具 + 每个实现一个子文件夹（如 `executor/backends/airtest/`）。数据驱动包（`prompts/`）不套用。
+2. **命名**（§11.2）：类 PascalCase / 函数变量 snake_case / 常量 UPPER_SNAKE_CASE / 协议无 `I` 前缀 / 文件 snake_case。
+3. **私有边界**（§11.3）：`_` 前缀唯一标准是"包外会不会直接 import"。禁止用 `_` 表达"不重要"。
+4. **导出**（§11.4）：每个 `__init__.py` 用 `__all__` 显式声明；禁 `from x import *`。
+5. **docstring**（§11.5）：中文 + Google 风格（Args/Returns/Raises）。模块/类/公共函数必须有。标杆：`executor/base.py`。
+6. **类型**（§11.6）：公共 API 必须标注，文件顶部 `from __future__ import annotations`。重依赖用 `TYPE_CHECKING` 延迟导入。
 7. **import**（§11.7）：分组 `__future__`→标准库→第三方→本项目→同包相对，组间空行。**重依赖（cv2/numpy/airtest）函数内懒导入**。
-8. **错误处理**（§11.8）：自定义异常用 `Error` 后缀继承 `Exception`。禁裸 `except:`。跨层用异常隔离降级。
-9. **日志**（§11.9）：`_LOGGER = logging.getLogger(__name__)`。不在模块顶层配 `basicConfig`。用户进度用 `print` 不用 logging。
-10. **测试**（§11.10）：`test_<被测模块>.py`，真机加 `_real` 后缀放 `tests/real/`。CI 用 Fake+Mock。数据模型加 `__test__ = False`。
+8. **错误处理**（§11.8）：自定义异常用 `Error` 后缀继承 `Exception`；禁裸 `except:`；跨层异常隔离降级。
+9. **日志**（§11.9）：`_LOGGER = logging.getLogger(__name__)`；不在模块顶层 `basicConfig`；用户进度用 `print` 不用 logging。
+10. **测试**（§11.10）：`test_<被测模块>.py`，真机测试加 `_real` 后缀放 `tests/real/`；CI 用 FakeBackend + MockProvider；数据模型类加 `__test__ = False`。
 
-## 工作约定
+## 7. 关键陷阱（footgun）
 
-- 改 Charter 生成逻辑前，先读 `DESIGN.md` §5.5 + ADR 列表，确认不违背已采纳决策。
-- `BUG_DEFINITION`、`ANALYST_CHECKLIST`（`prompts/constants/*.md`）、`DEFAULT_PERSONAS`（`prompts/data/personas.yaml`）是 prompt 工程核心，由 `prompts/loader.py` 统一加载，改动要谨慎。
+1. **SpecOps-src 硬依赖（仅 `generate-charter`）**：`charter_gen.py` 运行时依赖外部 `SpecOps-src`（调 AWS Bedrock）。查找顺序：`<repo_root>/SpecOps-src` → 上级目录 → `$SPECOPS_SRC` 环境变量。**独立探索流水线（pipeline）不走 SpecOps-src**，用 AnthropicProvider（.env 配 `MIMO_API_KEY`/`MIMO_BASE_URL`，兼容 MiMo/GLM 端点）。
+2. **Windows 编码**：所有 JSON 读写强制 `encoding="utf-8"`。Windows 默认 gbk 会炸，**不要去掉这个参数**。
+3. **字段重命名契约**：`write_charter` 把 LLM 输出的 `charter_changes_game_state` 转写成 `env_probing_required`（"yes"/"no"）。这是 Phase 1 → Phase 4 的契约，**不要改字段名**。
+4. **numpy<2 必须 pin**：`.venv` 里 airtest 的 cv2 基于 numpy 1.x ABI，numpy 升到 2.x 会让 cv2 立即 `ImportError`。（注：rapidocr 会拉 numpy>=2，实测 airtest 1.4.3 在 numpy 2.x 下可工作但属脆弱状态，见 pyproject `ocr` extra 注释。）
+5. **airtest title_re 不加引号**：`connect_device("Windows:///?title_re=.*Shattered.*")` —— 正则不要加单引号。
+6. **配置文件自动生成**：`explore`/`run-all` 首次运行会在 cwd 生成 `joker-test-config.json`（已 gitignore）。
+7. **全局 backend 注册**：`set_active_backend()` 在程序入口调用一次（CLI/conftest/pipeline）。测试间注意重置。
+8. **真机边界**：AirtestBackend 走 Win32 `PrintWindow`，窗口被完全遮挡/最小化时截图白屏/黑屏（G7）。
+9. **pytest 不收集 `Test*` 类**（`python_classes=[]`）：测试一律写成 `test_*` 函数。
+
+## 8. 测试策略
+
+- **CI 测试**：`tests/` 下 `test_<模块>.py`，用 `FakeBackend` + `MockProvider`，不碰真机、不碰真 LLM。
+- **真机测试**：`tests/real/test_*_real.py`，需要被测游戏窗口在线，CI 不跑。
+- **生成的冒烟用例**：`tests/generated_smoke/`（已 gitignore，是流水线产物而非手写测试）。
+- **端到端脚本**：`scripts/`（如 `e2e_spd_explore_conversation.py`，真 SPD + ConversationStrategy），手动运行。
+- 改动后至少跑：`pytest` + `ruff check src tests` + `mypy src`。
+
+## 9. 安全与凭据
+
+- `.env`（含 `MIMO_API_KEY` 等）已 gitignore，**绝不入库、不打印、不提交**。
+- AWS 凭据（Bedrock，charter_gen 用）走环境变量 / boto3 默认链。
+- `.claude/settings.local.json`、`.zcode/plans|sessions/`、`SpecOps-src/`、`.test-targets/` 均已 gitignore。
+- 运行时产物目录（`outputs/` `reports/` `flows/` `traces/` `logs/` `screenshots/` 等）全部 gitignore，不要把这些目录下的文件当源码改。
+
+## 10. 工作约定
+
+- 改 Charter 生成逻辑前，先读 `DESIGN.md` §5.5 + §8 ADR 列表，确认不违背已采纳决策。
+- prompt 工程核心文件改动要谨慎：`prompts/constants/bug_definition.md`、`prompts/constants/analyst_checklist.md`、`prompts/data/personas.yaml`（由 `prompts/loader.py` 统一加载）。
 - 新增 Charter schema 字段时，同步更新 `DESIGN.md` §6.1 和 `CLAUDE.md`。
-- **类应状态自洽**：实现新模块时让每个类自持所需上下文，避免互相反向引用形成网状依赖。
-- 交流一律用中文。
+- **类应状态自洽**：新模块让每个类自持所需上下文，避免互相反向引用形成网状依赖。
+- 追加架构决策 = 在 `DESIGN.md` §8 追加一条 ADR（现有 ADR-001 ~ ADR-014）。
+- 交流一律用中文；代码注释/docstring 也用中文（项目既有约定）。
