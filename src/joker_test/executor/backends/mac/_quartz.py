@@ -100,4 +100,75 @@ def activate_app(pid: int) -> None:
         app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
 
 
-__all__ = ["WindowInfo", "find_window", "capture_window", "activate_app"]
+# ===== 输入事件（CGEvent，全局 point 坐标）=====
+
+# mac 虚拟键码（kVK_*，来自 HIToolbox/Events.h）
+KEYCODES: dict[str, int] = {
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7,
+    "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
+    "y": 16, "t": 17, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37,
+    "j": 38, "k": 40, "n": 45, "m": 46,
+    "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22,
+    "7": 26, "8": 28, "9": 25, "0": 29,
+    "enter": 36, "tab": 48, "space": 49, "backspace": 51, "escape": 53,
+    "left": 123, "right": 124, "down": 125, "up": 126,
+}
+
+
+def post_click(x: float, y: float) -> None:
+    """在全局 point 坐标 (x, y) 单击左键。"""
+    point = (x, y)
+    for etype in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
+        ev = Quartz.CGEventCreateMouseEvent(None, etype, point, Quartz.kCGMouseButtonLeft)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+
+def post_key(keycode: int) -> None:
+    """按一下指定键码（down + up）。"""
+    for down in (True, False):
+        ev = Quartz.CGEventCreateKeyboardEvent(None, keycode, down)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+
+def post_swipe(x1: float, y1: float, x2: float, y2: float, duration: float = 0.5) -> None:
+    """从 (x1, y1) 拖到 (x2, y2)（全局 point 坐标），duration 秒内完成。"""
+    import time  # noqa: PLC0415
+
+    steps = max(int(duration / 0.01), 2)
+    down = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventLeftMouseDown, (x1, y1), Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+    for i in range(1, steps + 1):
+        xi = x1 + (x2 - x1) * i / steps
+        yi = y1 + (y2 - y1) * i / steps
+        ev = Quartz.CGEventCreateMouseEvent(
+            None, Quartz.kCGEventLeftMouseDragged, (xi, yi), Quartz.kCGMouseButtonLeft
+        )
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+        time.sleep(duration / steps)
+    up = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventLeftMouseUp, (x2, y2), Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+
+
+def post_long_press(x: float, y: float, duration: float = 2.0) -> None:
+    """在 (x, y) 长按左键 duration 秒。"""
+    import time  # noqa: PLC0415
+
+    down = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventLeftMouseDown, (x, y), Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+    time.sleep(duration)
+    up = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventLeftMouseUp, (x, y), Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+
+
+__all__ = [
+    "WindowInfo", "find_window", "capture_window", "activate_app",
+    "KEYCODES", "post_click", "post_key", "post_swipe", "post_long_press",
+]
