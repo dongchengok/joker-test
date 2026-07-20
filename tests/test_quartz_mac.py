@@ -77,10 +77,18 @@ def test_find_window_not_found(quartz_mod):
     assert q.find_window("OtherGame") is None
 
 
-def test_find_window_skip_nonzero_layer(quartz_mod):
-    win = dict(_WIN, kCGWindowLayer=1)
+def test_find_window_nonzero_layer_fallback(quartz_mod):
+    """全屏游戏窗口 layer≠0（实测 SPD 全屏 layer=25），兜底匹配任意 layer。"""
+    win = dict(_WIN, kCGWindowLayer=25)
     q = quartz_mod([win])
-    assert q.find_window("Shattered") is None
+    assert q.find_window("Shattered") == (42, (100.0, 50.0, 800.0, 600.0), 777)
+
+
+def test_find_window_prefers_layer0(quartz_mod):
+    """同标题多窗口时优先 layer=0 的普通窗口。"""
+    fullscreen = dict(_WIN, kCGWindowLayer=25, kCGWindowNumber=99)
+    q = quartz_mod([fullscreen, _WIN])
+    assert q.find_window("Shattered")[0] == 42
 
 
 def test_find_window_empty_name_skipped(quartz_mod):
@@ -97,7 +105,22 @@ def test_capture_window_bgra_to_bgr(quartz_mod):
     assert frame[0, 0].tolist() == [10, 20, 30]
 
 
-def test_capture_window_nil_image_raises(quartz_mod):
+def test_capture_window_nil_image_falls_back(quartz_mod, monkeypatch):
+    """CG API 返回 None 时兜底 screencapture（如其他 Space 的全屏窗口）。"""
+    import numpy as np
+
     q = quartz_mod([_WIN], image=None)
+    sentinel = np.zeros((2, 2, 3), dtype=np.uint8)
+    monkeypatch.setattr(q, "_capture_via_screencapture", lambda wid: sentinel)
+    assert q.capture_window(42) is sentinel
+
+
+def test_capture_window_both_paths_fail_raises(quartz_mod, monkeypatch):
+    q = quartz_mod([_WIN], image=None)
+
+    def _boom(wid):
+        raise RuntimeError("截图失败（screencapture 也失败）")
+
+    monkeypatch.setattr(q, "_capture_via_screencapture", _boom)
     with pytest.raises(RuntimeError, match="截图失败"):
         q.capture_window(42)

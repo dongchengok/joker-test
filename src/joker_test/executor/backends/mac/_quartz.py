@@ -11,6 +11,7 @@ macOS 专属。Quartz 模块级 import + ImportError 兜底（仿 airtest/backen
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 try:
@@ -28,7 +29,12 @@ WindowInfo = tuple[int, tuple[float, float, float, float], int]
 
 
 def find_window(title_substr: str) -> WindowInfo | None:
-    """按标题子串找第一个 layer=0 的在屏窗口。
+    """按标题子串找窗口（含其他 Space）。layer=0（普通窗口）优先，找不到再匹配任意 layer。
+
+    两个实测坑（SPD 验证）：
+    - 全屏游戏窗口的 layer 不是 0（全屏时 layer=25），只匹配 layer=0 会漏掉；
+    - 全屏窗口独占一个 Space，切走后不在 OnScreenOnly 列表里，必须枚举全部窗口
+      （option 0），connect 后用 activate_app 把游戏切回前台。
 
     Args:
         title_substr: 窗口标题子串（如 "Shattered"）
@@ -36,23 +42,37 @@ def find_window(title_substr: str) -> WindowInfo | None:
     Returns:
         (windowID, (x, y, w, h), ownerPID)；找不到返回 None。
     """
-    wins = Quartz.CGWindowListCopyWindowInfo(
-        Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID
-    )
-    for w in wins:
+    wins = Quartz.CGWindowListCopyWindowInfo(0, Quartz.kCGNullWindowID)
+
+    def _match(w: dict) -> WindowInfo | None:
         name = w.get("kCGWindowName") or ""
-        if w.get("kCGWindowLayer", -1) == 0 and title_substr in name:
-            b = w["kCGWindowBounds"]
-            bounds = (float(b["X"]), float(b["Y"]), float(b["Width"]), float(b["Height"]))
-            return int(w["kCGWindowNumber"]), bounds, int(w.get("kCGWindowOwnerPID", 0))
+        if title_substr not in name:
+            return None
+        b = w["kCGWindowBounds"]
+        bounds = (float(b["X"]), float(b["Y"]), float(b["Width"]), float(b["Height"]))
+        return int(w["kCGWindowNumber"]), bounds, int(w.get("kCGWindowOwnerPID", 0))
+
+    for w in wins:  # 第一遍：layer=0 普通窗口优先
+        if w.get("kCGWindowLayer", -1) == 0:
+            found = _match(w)
+            if found is not None:
+                return found
+    for w in wins:  # 第二遍：任意 layer（全屏游戏窗口）
+        found = _match(w)
+        if found is not None:
+            return found
     return None
 
 
 def capture_window(window_id: int) -> ndarray:
     """截取指定窗口，返回 BGR ndarray。
 
-    CGWindowListCreateImage 默认像素格式 BGRA（little-endian），取前三通道即 BGR。
-    窗口被遮挡也能截（合成器里有完整内容）；未授权屏幕录制时内容全黑。
+    两条路径：
+    - 快路径 CGWindowListCreateImage：窗口被遮挡也能截（合成器里有完整内容）。
+    - 兜底 screencapture CLI：实测全屏游戏窗口在其独立 Space 未激活时，CG API
+      返回 None，而 `screencapture -l <wid>` 能正常截到（SPD 验证）。
+
+    未授权屏幕录制时画面全黑/空——connect 的健康检测负责提示。
 
     Args:
         window_id: find_window 返回的 windowID
@@ -61,7 +81,7 @@ def capture_window(window_id: int) -> ndarray:
         BGR ndarray，形状 (h, w, 3)。
 
     Raises:
-        RuntimeError: CGWindowListCreateImage 返回 None。
+        RuntimeError: 两条路径都失败。
     """
     import numpy as np  # noqa: PLC0415
 
@@ -72,9 +92,7 @@ def capture_window(window_id: int) -> ndarray:
         Quartz.kCGWindowImageBoundsIgnoreFraming,
     )
     if img is None:
-        raise RuntimeError(
-            "截图失败（CGWindowListCreateImage 返回 None）。窗口可能已关闭。"
-        )
+        return _capture_via_screencapture(window_id)
     w = Quartz.CGImageGetWidth(img)
     h = Quartz.CGImageGetHeight(img)
     bpr = Quartz.CGImageGetBytesPerRow(img)
@@ -82,6 +100,45 @@ def capture_window(window_id: int) -> ndarray:
     buf = np.frombuffer(data, dtype=np.uint8)
     bgra = buf[: h * bpr].reshape(h, bpr)[:, : w * 4].reshape(h, w, 4)
     return bgra[:, :, :3].copy()
+
+
+def _capture_via_screencapture(window_id: int) -> ndarray:
+    """用系统 screencapture CLI 截窗口（CG API 失败的兜底，见 capture_window）。
+
+    Args:
+        window_id: find_window 返回的 windowID
+
+    Returns:
+        BGR ndarray。
+
+    Raises:
+        RuntimeError: screencapture 失败或图像读不出来。
+    """
+    import subprocess  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    import cv2  # noqa: PLC0415
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        tmp = f.name
+    try:
+        result = subprocess.run(
+            ["screencapture", "-x", "-l", str(window_id), tmp],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"截图失败（CG API 返回 None 且 screencapture 退出码 "
+                f"{result.returncode}: {result.stderr.decode(errors='replace')[:100]}）。"
+                "窗口可能已关闭。"
+            )
+        frame = cv2.imread(tmp)
+        if frame is None or frame.size == 0:
+            raise RuntimeError("截图失败（screencapture 输出为空/不可读）。")
+        return frame
+    finally:
+        Path(tmp).unlink(missing_ok=True)
 
 
 def activate_app(pid: int) -> None:
