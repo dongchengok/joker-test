@@ -88,22 +88,24 @@ class LLMProvider(Protocol):
         self,
         *,
         messages: list[dict[str, Any]],
+        system: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | None = None,
-    ) -> Message:
+    ) -> dict[str, Any]:
         """创建消息（对齐 client.messages.create）。
 
         Args:
-            messages: 完整对话历史（含当前 user message）
+            messages: 完整对话历史（含当前 user message，仅 user/assistant 角色）
+            system: 系统提示词（顶层参数，不要塞进 messages）
             model: 模型名（None=用默认）
             max_tokens: 最大输出 token（None=用默认）
             tools: 工具定义列表
-            tool_choice: 工具选择策略
+            tool_choice: 工具选择策略（thinking 开启时仅支持 auto/none）
 
         Returns:
-            Message（content 含 text/tool_use blocks）
+            响应 dict（content 含 text/tool_use/thinking blocks）
         """
         ...
 

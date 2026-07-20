@@ -114,3 +114,22 @@ def test_create_retry_strips_thinking_without_signature() -> None:
     ]
     thinking_blocks = [b for b in assistant_blocks if b.get("type") == "thinking"]
     assert thinking_blocks == [], "重试回传的 assistant 消息不得含 thinking block"
+
+
+def test_create_passes_system_as_top_level_param() -> None:
+    """system 必须走顶层 kwargs，且不得出现在 messages 数组里（Anthropic 约束）。"""
+    provider = _make_provider()
+    captured: dict = MagicMock()
+
+    def fake_create(**kwargs: object) -> SimpleNamespace:
+        nonlocal captured
+        captured = kwargs
+        return _response([_block("text", text="ok")])
+
+    provider._client.messages.create = fake_create  # type: ignore[method-assign]
+
+    provider.create(messages=_user_msg(), system="你是探索助手")
+
+    assert captured.get("system") == "你是探索助手"
+    roles = [m.get("role") for m in captured["messages"] if isinstance(m, dict)]
+    assert "system" not in roles, "messages 数组不得含 role=system"

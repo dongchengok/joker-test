@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from joker_test.generator.quality import QualityChecker, QualityError
 from joker_test.generator.types import GeneratedTest
@@ -30,7 +30,7 @@ from joker_test.prompts import render_smoke_test_prompt
 
 if TYPE_CHECKING:
     from joker_test.explorer.types import StateMap
-    from joker_test.llm.base import LLMProvider, Message
+    from joker_test.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ def write_tests_to_dir(tests: list[GeneratedTest], output_dir: str | Path) -> li
     return test_paths
 
 
-def _extract_text(msg: Message) -> str:
+def _extract_text(msg: dict[str, Any]) -> str:
     """从 Message 提取纯文本（拼所有 text 块，忽略 reasoningContent）。"""
     parts: list[str] = []
     for block in msg.get("content", []):

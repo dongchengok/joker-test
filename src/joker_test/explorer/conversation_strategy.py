@@ -19,7 +19,7 @@ from joker_test.explorer.strategy import (
     parse_coords,
 )
 from joker_test.explorer.types import Screen, StateMap
-from joker_test.llm.base import LLMProvider, Message
+from joker_test.llm.base import LLMProvider
 from joker_test.prompts.loader import load_full_exploration_prompt
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,7 +41,8 @@ class ConversationStrategy:
         self._intent = intent
         self._max_tokens = max_conversation_tokens
         self._plugin_manager = plugin_manager
-        self._messages: list[Message] = []
+        self._system_prompt: str = ""
+        self._messages: list[dict[str, Any]] = []
         self._screens: list[Screen] = []
         self._goal_completed: bool = False
         self._initialized = False
@@ -58,12 +59,11 @@ class ConversationStrategy:
         """构建 prompt → LLM（tool_use 结构化输出）→ 解析 tool_use block。"""
         if not self._initialized:
             # 系统提示词：base + 插件注入（无 plugin_manager 时用 _BASE_PROMPT）
+            # 走顶层 system 参数（Anthropic API 不允许 messages 里出现 role=system）
             sys_prompt = _BASE_PROMPT
             if self._plugin_manager is not None:
                 sys_prompt = self._plugin_manager.build_system_prompt(_BASE_PROMPT)
-            self._messages.append(
-                {"role": "system", "content": [{"type": "text", "text": sys_prompt}]}
-            )
+            self._system_prompt = sys_prompt
             self._initialized = True
 
         img_b64 = self._encode_image(screenshot)
@@ -77,8 +77,11 @@ class ConversationStrategy:
         try:
             reply = self._llm.create(
                 messages=self._messages + [user_msg],
+                system=self._system_prompt,
                 tools=[EXPLORE_TOOL_SCHEMA],
-                tool_choice={"type": "tool", "name": "execute_action"},
+                # thinking 开启时 Anthropic 只允许 auto/none，强制 tool 会 400；
+                # 模型不调工具由 provider 的 tool_use 重试 + 本地降级兜底
+                tool_choice={"type": "auto"},
             )
         except Exception as e:  # noqa: BLE001
             _LOGGER.warning("LLM 决策失败：%s", e)
@@ -147,7 +150,10 @@ class ConversationStrategy:
                     y=y,
                     description=target,
                 )
-        # 无 tool_use block（降级）
+        # 无 tool_use block（降级）：tool_choice=auto 下模型可能纯文本回复，
+        # provider 重试 3 次仍无工具调用则走到这里。权衡：直接停止探索（而非
+        # 降级为无害动作继续）——机械层失败属罕见事件，空转烧 token 更亏；
+        # 层次化 replan（主 agent 监督）留待迭代 C 的 L2/L3 分层统一设计。
         return StepDecision(think="无 tool_use block", action="stop", stop=True)
 
     def _maybe_add_screen(self, perception: Any, ctx: ExploreContext) -> None:
@@ -212,7 +218,7 @@ class ConversationStrategy:
             return
 
         # Build pure fact summary line
-        parts = [decision.action]
+        parts: list[str] = [decision.action]
         if decision.target:
             parts.append(decision.target[:15])
         elif decision.x is not None and decision.y is not None:

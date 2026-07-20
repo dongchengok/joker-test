@@ -24,10 +24,11 @@ import json
 import logging
 import os
 import sys
+from typing import Any
 
 from tqdm import tqdm
 
-from joker_test.llm.base import LLMProvider, Message
+from joker_test.llm.base import LLMProvider
 from joker_test.llm.providers.anthropic import AnthropicProvider
 from joker_test.llm.providers.mock import MockProvider
 from joker_test.prompts import (
@@ -119,7 +120,7 @@ def generate_charters(targets_file, game_meta_file, output_dir=None,
         architect_prompt = render_architect_prompt(
             batch_targets, game_meta, personas, heuristics)
 
-        messages: list[Message] = []
+        messages: list[dict[str, Any]] = []
 
         from joker_test.llm.base import build_user_message  # noqa: PLC0415
 

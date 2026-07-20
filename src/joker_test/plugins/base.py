@@ -22,13 +22,15 @@ class AgentPlugin(Protocol):
     实现者只需实现需要的方法，不需要的返回空串/None。
     """
 
-    name: str
+    @property
+    def name(self) -> str:
+        """插件名（协议声明为只读 property，实现方用属性或 property 均可）。"""
+        ...
 
     def inject_system_prompt(self) -> str:
         """系统提示词注入点（固定，只拼接一次）。
         告诉 LLM 如何理解本插件提供的信息格式。返回空串 = 不注入。"""
         ...
-
     def inject_step(self, screenshot: Any, backend: Any, ctx: Any) -> str:
         """每轮对话注入点（动态，每步都调）。
         返回本步要追加到 user message 的文本。返回空串 = 不注入。"""

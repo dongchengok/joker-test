@@ -33,10 +33,9 @@ import datetime
 import html
 import json
 import logging
-import os
 import re
-import signal
 import shutil
+import signal
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -102,7 +101,7 @@ class Tracer:
         # （旧设计攒内存等 finalize 一次性写，崩溃 = 空目录）
         self._jsonl_path = self._dir / "events.jsonl"
         self._llm_jsonl_path = self._dir / "llm_calls.jsonl"
-        self._jsonl_file = self._jsonl_path.open("a", encoding="utf-8")
+        self._jsonl_file: Any = self._jsonl_path.open("a", encoding="utf-8")
         self._llm_jsonl_file: Any = None  # 懒打开（首次 log_llm 才建）
 
     @property
@@ -775,7 +774,7 @@ def trace_finalize() -> dict[str, Any]:
 
 
 # 各信号对应的默认退出行为
-_SIGNAL_EXIT = {
+_SIGNAL_EXIT: dict[int, type[KeyboardInterrupt]] = {
     signal.SIGINT: KeyboardInterrupt,
 }
 # SIGTERM / SIGBREAK 默认行为是 terminate（非异常），需要特殊处理
@@ -916,9 +915,9 @@ if __name__ == "__main__":
     elif args.command == "rebuild":
         if args.trace_dir:
             # 重建指定目录
-            html = rebuild_html(args.trace_dir)
-            if html:
-                print(f"✓ 已重建 {html}")
+            html_path = rebuild_html(args.trace_dir)
+            if html_path:
+                print(f"✓ 已重建 {html_path}")
             else:
                 print(f"✗ {args.trace_dir} 无 events.jsonl，无法重建")
         else:
@@ -930,9 +929,9 @@ if __name__ == "__main__":
                     has_jsonl = (d / "events.jsonl").exists()
                     has_html = (d / "trace.html").exists()
                     if has_jsonl and not has_html:
-                        html = rebuild_html(d)
-                        if html:
-                            print(f"✓ 崩溃恢复: {d.name} → {html}")
+                        html_path = rebuild_html(d)
+                        if html_path:
+                            print(f"✓ 崩溃恢复: {d.name} → {html_path}")
                             recovered += 1
             if recovered:
                 print(f"共恢复 {recovered} 个崩溃的 trace")

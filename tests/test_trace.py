@@ -473,7 +473,6 @@ def test_crash_preserves_events(tmp_path: Path) -> None:
 
 def test_noop_does_not_create_files(tmp_path: Path, monkeypatch) -> None:
     """NoOpTracer 模式下不产生任何目录/文件（--no-trace 场景）。"""
-    import json  # noqa: PLC0415
 
     _reset_global_tracer()
     monkeypatch.chdir(tmp_path)

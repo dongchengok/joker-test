@@ -95,7 +95,8 @@ class ReactStateStrategy:
             msg = self._llm.create(
                 messages=[build_user_message(prompt)],
                 tools=[EXPLORE_TOOL_SCHEMA],
-                tool_choice={"type": "tool", "name": "execute_action"},
+                # thinking 开启时 Anthropic 只允许 auto/none，强制 tool 会 400
+                tool_choice={"type": "auto"},
             )
         except Exception as e:  # noqa: BLE001
             _LOGGER.warning("LLM 决策失败：%s", e)
@@ -125,7 +126,7 @@ class ReactStateStrategy:
             self._state.stale_count += 1
 
         # 去重 key：click 用坐标量化，其他用 target
-        if decision.action == "click" and decision.x is not None:
+        if decision.action == "click" and decision.x is not None and decision.y is not None:
             target = f"coord({round(decision.x * 10) / 10:.1f},{round(decision.y * 10) / 10:.1f})"
         else:
             target = decision.target or decision.description

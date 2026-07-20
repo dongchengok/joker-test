@@ -216,9 +216,9 @@ class LLMExplorer:
             x, y = decision.x, decision.y
             if x is not None and y is not None:
                 if "left" in direction:
-                    dx, dy = -0.3, 0   # 向左拖：x 减小
+                    dx, dy = -0.3, 0.0  # 向左拖：x 减小
                 elif "right" in direction:
-                    dx, dy = 0.3, 0    # 向右拖：x 增大
+                    dx, dy = 0.3, 0.0   # 向右拖：x 增大
                 elif "down" in direction:
                     dx, dy = 0, 0.4    # 向下拖：y 增大
                 elif "up" in direction:

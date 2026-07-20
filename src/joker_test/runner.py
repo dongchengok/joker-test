@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime
 import time
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -68,7 +69,7 @@ class _ResultCollector:
 
 
 def run_tests(
-    test_paths: list[str | Path],
+    test_paths: Sequence[str | Path],
     backend_name: str = "fake",
     game_name: str = "unknown",
 ) -> TestSession:

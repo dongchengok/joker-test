@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from joker_test.llm.base import format_trace_messages
 
@@ -132,12 +132,13 @@ class AnthropicProvider:
             base_url=self._base_url,
             max_retries=self._max_retries,
         )
-        self._instructor_client = None
+        self._instructor_client: Any = None
 
     def create(
         self,
         *,
         messages: list[dict[str, Any]],
+        system: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
@@ -158,6 +159,9 @@ class AnthropicProvider:
             "max_tokens": effective_max,
             "messages": messages,
         }
+        if system:
+            # Anthropic 要求 system 走顶层参数，不能塞 messages 数组（role=system 会 400）
+            kwargs["system"] = system
         if tools:
             kwargs["tools"] = tools
         if tool_choice:
@@ -246,7 +250,8 @@ class AnthropicProvider:
         return self._client.messages.stream(
             model=model or self._model,
             max_tokens=max_tokens or self._max_tokens,
-            messages=messages,
+            # 我们的 dict 结构与 SDK MessageParam 结构一致，cast 消除类型差异
+            messages=cast("Any", messages),
         )
 
     def count_tokens(
@@ -257,7 +262,7 @@ class AnthropicProvider:
         """估算 token 用量。"""
         result = self._client.messages.count_tokens(
             model=self._model,
-            messages=messages,
+            messages=cast("Any", messages),
         )
         return result.input_tokens
 

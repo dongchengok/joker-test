@@ -5,7 +5,7 @@ ExploreStrategy 是可替换的探索决策层。LLMExplorer 外壳持有策略�
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -58,7 +58,8 @@ ACTION_ALIASES: dict[str, str] = {
 VALID_ACTIONS = {"click", "press_key", "type_text", "swipe", "scroll", "long_press", "back", "stop"}
 
 # 探索动作的 tool_use schema（Anthropic 格式）
-# 传给 LLMProvider.create(tool_schema=...) 强制结构化输出
+# 传给 LLMProvider.create(tools=...) 引导结构化输出
+# （thinking 开启时 tool_choice 只能用 auto，不能强制，故配合重试/降级兜底）
 EXPLORE_TOOL_SCHEMA: dict[str, Any] = {
     "name": "execute_action",
     "description": "执行一个游戏探索操作",
@@ -100,13 +101,13 @@ EXPLORE_TOOL_SCHEMA: dict[str, Any] = {
 }
 
 
-def normalize_action(raw: str) -> str:
+def normalize_action(raw: str) -> ExploreAction:
     """把 LLM 输出的动作名标准化，未知动作降级为 stop。"""
     action = raw.strip().lower()
     action = ACTION_ALIASES.get(action, action)
     if action not in VALID_ACTIONS:
         action = "stop"
-    return action
+    return cast("ExploreAction", action)
 
 
 def parse_coords(

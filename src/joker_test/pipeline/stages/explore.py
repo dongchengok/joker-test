@@ -194,8 +194,10 @@ class ExploreStage:
 
         from joker_test.explorer.conversation_strategy import ConversationStrategy  # noqa: PLC0415
         from joker_test.explorer.react_strategy import ReactStateStrategy  # noqa: PLC0415
+        from joker_test.explorer.strategy import ExploreStrategy  # noqa: PLC0415
 
         pm = self._plugin_manager
+        strategy: ExploreStrategy
         if config.explore_strategy == "conversation":
             strategy = ConversationStrategy(
                 llm=self._provider, intent=config.intent, plugin_manager=pm,

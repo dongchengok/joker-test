@@ -10,13 +10,13 @@ import json
 import time
 from typing import Any
 
-from joker_test.llm.base import Message, format_trace_messages
+from joker_test.llm.base import format_trace_messages
 
 # 固定回复（content block 带 type 字段，对齐 SDK 格式）
-_ARCHITECT_REPLY: Message = {
+_ARCHITECT_REPLY = {
     "content": [{"type": "text", "text": "[Mock Architect] 已生成 Charter 草稿（模拟）。"}]
 }
-_ANALYST_REPLY: Message = {
+_ANALYST_REPLY = {
     "content": [{"type": "text", "text": "[Mock Analyst] 已按 checklist 反思（模拟），无需修订。"}]
 }
 
@@ -65,7 +65,7 @@ _MOCK_CHARTERS: list[dict[str, Any]] = [
     },
 ]
 
-_MOCK_SMOKE_TEST_REPLY: Message = {
+_MOCK_SMOKE_TEST_REPLY = {
     "content": [{"type": "text", "text": (
         "### test_inventory.py\n"
         "```python\n"
@@ -103,7 +103,7 @@ _MOCK_SMOKE_TEST_REPLY: Message = {
     )}]
 }
 
-_MOCK_REVIEW_REPLY: Message = {
+_MOCK_REVIEW_REPLY = {
     "content": [{"type": "text", "text": '{"is_false_positive": true, "reason": "Mock 判定为误报（测试逻辑问题）"}'}]
 }
 
@@ -132,12 +132,13 @@ class MockProvider:
         self,
         *,
         messages: list[dict[str, Any]],
+        system: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | None = None,
-    ) -> Message:
-        """模拟 create：根据 messages 内容返回固定回复。"""
+    ) -> dict[str, Any]:
+        """模拟 create：根据 messages 内容返回固定回复（system 参数接收但忽略）。"""
         from joker_test.llm.providers.anthropic import extract_text  # noqa: PLC0415
         from joker_test.trace import trace_llm  # noqa: PLC0415
 
@@ -147,7 +148,7 @@ class MockProvider:
         # tool_use 模式
         if tools:
             tool_name = tools[0].get("name", "execute_action") if tools else "execute_action"
-            reply: Message = {
+            reply: dict[str, Any] = {
                 "content": [{
                     "type": "tool_use",
                     "name": tool_name,

@@ -15,12 +15,12 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from joker_test.reporters.base import TestResult
 
 if TYPE_CHECKING:
-    from joker_test.llm.base import LLMProvider, Message
+    from joker_test.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ def review_failure(
     return _parse_verdict(text)
 
 
-def _extract_text(msg: Message) -> str:
+def _extract_text(msg: dict[str, Any]) -> str:
     parts = [b.get("text", "") for b in msg.get("content", []) if "text" in b]
     return "\n".join(parts)
 

@@ -65,6 +65,35 @@ def test_assistant_message_added_to_history() -> None:
     assert len(assistant_msgs) >= 1
 
 
+def test_decide_sends_system_as_top_level_param() -> None:
+    """系统提示词必须经 create 的顶层 system 参数传递，messages 里不得有 role=system。
+
+    回归防护：Anthropic API 不允许 messages 数组出现 role=system（400）。
+    MockProvider 会忽略 system 参数，所以这里用 MagicMock 捕获真实入参断言。
+    """
+    mock_llm = MagicMock()
+    mock_llm.create.return_value = {
+        "content": [
+            {
+                "type": "tool_use",
+                "name": "execute_action",
+                "input": {"action": "stop", "target": ""},
+            }
+        ]
+    }
+    strategy = ConversationStrategy(llm=mock_llm, intent="测试")
+    ctx = ExploreContext(
+        step=0, max_steps=10, intent="测试", backend=None, llm=mock_llm
+    )
+    strategy.decide(screenshot=b"img", perception=None, ctx=ctx)
+
+    kwargs = mock_llm.create.call_args.kwargs
+    assert kwargs.get("system"), "create 应收到非空顶层 system 参数"
+    roles = [m.get("role") for m in kwargs["messages"]]
+    assert "system" not in roles, "messages 数组不得含 role=system"
+    assert [m["role"] for m in strategy._messages] == ["user", "assistant"]
+
+
 def test_should_stop_on_goal_completed() -> None:
     strategy = ConversationStrategy(llm=MagicMock(), intent="测试")
     strategy._goal_completed = True

@@ -21,13 +21,13 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from joker_test.flow.semantics import _cv_imread
 from joker_test.flow.types import RecordedFlow
 
 if TYPE_CHECKING:
-    from joker_test.llm.base import LLMProvider, Message
+    from joker_test.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ class FlowNamer:
         return images
 
     @staticmethod
-    def _extract_text(msg: Message) -> str:
+    def _extract_text(msg: dict[str, Any]) -> str:
         """从 Message 提取文本。"""
         parts: list[str] = []
         for block in msg.get("content", []):
