@@ -73,7 +73,9 @@ def backend() -> Iterator[ExecutorBackend]:
     （click/click_text/click_image/wait_until/state 等），测试代码有完整补全。
 
     JOKER_BACKEND=fake（默认）→ FakeBackend（CI，session scope）
-    JOKER_BACKEND=airtest → AirtestBackend + RapidOCR 连真游戏（真执行）
+    JOKER_BACKEND=airtest → AirtestBackend + RapidOCR 连真游戏（Windows 真执行）
+    JOKER_BACKEND=mac → MacBackend + RapidOCR 连真游戏（macOS 真执行）
+    JOKER_BACKEND=native → 按当前平台自动选 airtest/mac
 
     airtest 模式需先启动游戏，窗口标题用 JOKER_WINDOW（默认 "Shattered"）。
     FakeBackend 和 AirtestBackend 都满足 ExecutorBackend 协议（结构化子类型）。
@@ -89,6 +91,28 @@ def backend() -> Iterator[ExecutorBackend]:
             pytest.skip("airtest/rapidocr 未装（pip install -e .[airtest,ocr]）")
 
         backend = AirtestBackend(window_title=window_title, ocr=RapidOCRProvider())
+        backend.connect()
+        set_active_backend(backend)
+        yield backend
+        backend.close()
+    elif backend_type == "mac":
+        try:
+            from joker_test.executor.backends.mac import MacBackend
+            from joker_test.ocr.providers.rapidocr import RapidOCRProvider
+        except ImportError:
+            pytest.skip("pyobjc/rapidocr 未装（pip install -e .[mac,ocr]）")
+
+        backend = MacBackend(window_title=window_title, ocr=RapidOCRProvider())
+        backend.connect()
+        set_active_backend(backend)
+        yield backend
+        backend.close()
+    elif backend_type == "native":
+        # 按当前平台自动选 AirtestBackend(Win)/MacBackend(Mac)
+        from joker_test.executor.backends.factory import create_native_backend
+        from joker_test.ocr.providers.rapidocr import RapidOCRProvider
+
+        backend = create_native_backend(window_title=window_title, ocr=RapidOCRProvider())
         backend.connect()
         set_active_backend(backend)
         yield backend
