@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -24,24 +23,12 @@ LLM_CHOICE = os.environ.get("JOKER_LLM", "mimo").lower()
 
 # 等游戏窗口就绪
 print("等待 SPD 窗口...")
-import win32gui  # noqa: E402
+from joker_test.executor.window import wait_for_window  # noqa: E402
 
-_FOUND = [False]
-def _check_window(h, _):  # noqa: ANN001
-    if win32gui.IsWindowVisible(h) and "Shattered" in win32gui.GetWindowText(h):
-        _FOUND[0] = True
-    return True
-
-for _ in range(10):
-    _FOUND[0] = False
-    win32gui.EnumWindows(_check_window, None)
-    if _FOUND[0]:
-        print("✓ SPD 窗口已就绪")
-        break
-    time.sleep(1)
-else:
-    print("✗ SPD 未启动，请先运行 .test-targets/SPD/'Shattered Pixel Dungeon.exe'")
+if not wait_for_window("Shattered", timeout=10.0):
+    print("✗ SPD 未启动（Mac: java -jar ShatteredPD.jar；Win: .test-targets/SPD/*.exe）")
     sys.exit(1)
+print("✓ SPD 窗口已就绪")
 
 # Step 1: 提示词配置
 print("\n" + "=" * 60)
@@ -55,11 +42,12 @@ print(f"游戏: {game_meta['game_name']}")
 print("\n" + "=" * 60)
 print("Step 2: 真 SPD 界面探索（AirtestBackend + RapidOCR）")
 print("=" * 60)
-from joker_test.executor.backends.airtest import AirtestBackend  # noqa: E402
+from joker_test.executor.backends.factory import create_native_backend  # noqa: E402
 from joker_test.explorer import UIExplorer  # noqa: E402
 from joker_test.ocr.providers.rapidocr import RapidOCRProvider  # noqa: E402
 
-backend = AirtestBackend(window_title="Shattered", ocr=RapidOCRProvider())
+backend = create_native_backend(window_title="Shattered", ocr=RapidOCRProvider())
+backend.connect()
 # max_depth=1：只探索根界面（不点按钮触发切屏，避开 G7 click 后空帧）
 explorer = UIExplorer(
     backend, max_depth=1, max_screens=3, screen_change_timeout=5.0,

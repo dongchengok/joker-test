@@ -16,7 +16,6 @@ import datetime
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -56,19 +55,9 @@ for d in [OUTPUTS_DIR, REPORTS_DIR, CHARTER_DIR, TESTCASES_DIR]:
 
 def wait_spd_window(timeout: float = 30.0) -> bool:
     """等 SPD 窗口就绪。"""
-    import win32gui  # noqa: PLC0415
+    from joker_test.executor.window import wait_for_window  # noqa: PLC0415
 
-    for _ in range(int(timeout)):
-        found = [False]
-        def _check(h, _):  # noqa: ANN001
-            if win32gui.IsWindowVisible(h) and WINDOW_TITLE in win32gui.GetWindowText(h):
-                found[0] = True  # noqa: B023
-            return True
-        win32gui.EnumWindows(_check, None)
-        if found[0]:
-            return True
-        time.sleep(1)
-    return False
+    return wait_for_window(WINDOW_TITLE, timeout=timeout)
 
 
 def make_llm():
@@ -124,7 +113,7 @@ with tracer.stage("charter_gen"):
 # === 阶段 2：探索 SPD + LLM 生成 test_case ===
 print("\n[阶段 2] 探索 SPD + LLM 生成 test_case...")
 with tracer.stage("explore_and_generate"):
-    from joker_test.executor.backends.airtest import AirtestBackend  # noqa: PLC0415
+    from joker_test.executor.backends.factory import create_native_backend  # noqa: PLC0415
     from joker_test.explorer.llm_explorer import LLMExplorer  # noqa: PLC0415
     from joker_test.generator.generator import (  # noqa: PLC0415
         SmokeTestGenerator,
@@ -132,7 +121,7 @@ with tracer.stage("explore_and_generate"):
     )
     from joker_test.ocr.providers.rapidocr import RapidOCRProvider  # noqa: PLC0415
 
-    explore_backend = AirtestBackend(window_title=WINDOW_TITLE, ocr=RapidOCRProvider())
+    explore_backend = create_native_backend(window_title=WINDOW_TITLE, ocr=RapidOCRProvider())
     explore_backend.connect()
     tracer.log_event("backend_connected", {"backend": "airtest", "window": WINDOW_TITLE})
 
@@ -205,29 +194,26 @@ with tracer.stage("explore_and_generate"):
 print("\n[阶段 2.5] 重置游戏状态（重启 SPD 回主菜单）...")
 with tracer.stage("reset_game"):
     import subprocess  # noqa: PLC0415
+    import sys as _sys  # noqa: PLC0415
     import time as _time  # noqa: PLC0415
 
-    import win32gui  # noqa: PLC0415
+    from joker_test.executor.window import wait_for_window  # noqa: PLC0415
 
     try:
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"],
-            capture_output=True,
-        )
-        _time.sleep(2)
-        exe = str(REPO / ".test-targets" / "SPD" / "Shattered Pixel Dungeon.exe")
-        subprocess.Popen([exe], cwd=os.path.dirname(exe))
-        # 等窗口就绪
-        for _ in range(20):
-            found = [False]
-            def _check(h, _):  # noqa: ANN001
-                if win32gui.IsWindowVisible(h) and WINDOW_TITLE in win32gui.GetWindowText(h):
-                    found[0] = True  # noqa: B023
-                return True
-            win32gui.EnumWindows(_check, None)
-            if found[0]:
-                break
-            _time.sleep(1)
+        if _sys.platform == "darwin":
+            subprocess.run(["pkill", "-f", "ShatteredPD"], capture_output=True)
+            _time.sleep(2)
+            jar = str(REPO / ".test-targets" / "SPD-mac" / "ShatteredPD.jar")
+            subprocess.Popen(["java", "-jar", jar], cwd=os.path.dirname(jar))
+        else:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"],
+                capture_output=True,
+            )
+            _time.sleep(2)
+            exe = str(REPO / ".test-targets" / "SPD" / "Shattered Pixel Dungeon.exe")
+            subprocess.Popen([exe], cwd=os.path.dirname(exe))
+        wait_for_window(WINDOW_TITLE, timeout=20.0)
         _time.sleep(3)  # 额外等 LibGDX 初始化
         tracer.log_event("game_reset", {"method": "restart"})
         print("✓ SPD 已重启回主菜单")
