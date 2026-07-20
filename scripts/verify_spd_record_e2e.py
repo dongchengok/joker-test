@@ -207,7 +207,7 @@ for p in test_paths:
 print(f"\n{'=' * 70}")
 print("[4] 试跑验证 + 回喂重写（TestCaseVerifier）")
 print(f"{'=' * 70}")
-os.environ["JOKER_BACKEND"] = "airtest"
+os.environ["JOKER_BACKEND"] = "native"
 os.environ["JOKER_WINDOW"] = WINDOW_TITLE
 
 from joker_test.flow import TestCaseVerifier  # noqa: E402
@@ -216,7 +216,7 @@ verifier = TestCaseVerifier(
     reset_fn=reset_spd,
     gen_dir=gen_dir,
     max_retries=2,
-    backend_name="airtest",
+    backend_name="native",
     game_name="Shattered Pixel Dungeon",
 )
 tests, history = verifier.verify_and_fix(tests, gen, flow, final_dir, game_meta)
@@ -250,7 +250,7 @@ from joker_test.runner import run_tests  # noqa: E402
 
 session = run_tests(
     test_paths=[str(p) for p in final_test_paths],
-    backend_name="airtest",
+    backend_name="native",
     game_name="Shattered Pixel Dungeon",
 )
 

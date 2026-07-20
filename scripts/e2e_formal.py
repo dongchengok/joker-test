@@ -115,7 +115,7 @@ from joker_test.runner import run_tests  # noqa: E402
 
 # 执行生成的测试 + 手写真测试
 test_paths = [str(p) for p in gen_paths] + ["tests/real/"]
-session = run_tests(test_paths, backend_name="airtest", game_name="SPD-正式端到端")
+session = run_tests(test_paths, backend_name="native", game_name="SPD-正式端到端")
 print(f"✓ 执行完成：通过 {session.passed}，失败 {session.failed}，共 {len(session.results)}")
 for r in session.results:
     icon = "✓" if r.status == "passed" else "✗"

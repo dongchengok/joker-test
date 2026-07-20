@@ -123,7 +123,7 @@ with tracer.stage("explore_and_generate"):
 
     explore_backend = create_native_backend(window_title=WINDOW_TITLE, ocr=RapidOCRProvider())
     explore_backend.connect()
-    tracer.log_event("backend_connected", {"backend": "airtest", "window": WINDOW_TITLE})
+    tracer.log_event("backend_connected", {"backend": "native", "window": WINDOW_TITLE})
 
     try:
         # 2a. LLM 驱动探索（看截图 + 决策，充分探索）
@@ -235,12 +235,12 @@ with tracer.stage("run_tests"):
         tracer.log_error("无测试文件可执行")
         print("✗ 无测试文件")
     else:
-        # 用真实 airtest backend 跑（JOKER_BACKEND=airtest）
-        os.environ["JOKER_BACKEND"] = "airtest"
+        # 用当前平台的原生 backend 跑（JOKER_BACKEND=native）
+        os.environ["JOKER_BACKEND"] = "native"
         os.environ["JOKER_WINDOW"] = WINDOW_TITLE
         session = run_tests(
             test_paths=[str(p) for p in test_paths],
-            backend_name="airtest",
+            backend_name="native",
             game_name="Shattered Pixel Dungeon",
         )
 
