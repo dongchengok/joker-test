@@ -57,6 +57,10 @@ airtest = [
     # 录制器依赖（pynput 全局监听人类操作，flow 包用）
     "pynput>=1.7",
 ]
+mac = [
+    # macOS 原生 backend（Quartz 窗口枚举/截图 + CGEvent 输入）
+    "pyobjc-framework-Quartz>=10.0; sys_platform=='darwin'",
+]
 ocr = [
     # OCR 引擎（默认 RapidOCR，onnxruntime 轻量，中文好）。
     # 注意：rapidocr 会拉 numpy>=2，与 airtest 的 numpy<2 声明冲突。
