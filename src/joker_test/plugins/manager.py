@@ -64,6 +64,7 @@ class PluginManager:
                     parts.append(injected)
                     trace_event("plugin_inject", {
                         "plugin": p.name, "inject_point": "step", "length": len(injected),
+                        "content": injected,
                     })
             except Exception as e:  # noqa: BLE001
                 _LOGGER.warning("插件 %s inject_step 失败：%s", p.name, e)
@@ -73,6 +74,7 @@ class PluginManager:
                     parts.append(hint)
                     trace_event("plugin_inject", {
                         "plugin": p.name, "inject_point": "action_hint", "length": len(hint),
+                        "content": hint,
                     })
             except Exception as e:  # noqa: BLE001
                 _LOGGER.warning("插件 %s inject_action_hint 失败：%s", p.name, e)

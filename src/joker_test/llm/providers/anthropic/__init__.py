@@ -110,6 +110,8 @@ class AnthropicProvider:
         model: str | None = None,
         max_tokens: int = 4096,
         max_retries: int = 5,
+        thinking_enabled: bool = True,
+        thinking_budget_tokens: int = 8000,
     ) -> None:
         cfg = load_env()
         self._api_key = api_key or cfg.get("MIMO_API_KEY", "")
@@ -117,6 +119,8 @@ class AnthropicProvider:
         self._model = model or cfg.get("MIMO_MODEL", "mimo-v2.5")
         self._max_tokens = max_tokens
         self._max_retries = max_retries
+        self._thinking_enabled = thinking_enabled
+        self._thinking_budget_tokens = thinking_budget_tokens
 
         if not self._api_key:
             raise ValueError("缺 API key。请在 .env 设 MIMO_API_KEY 或传 api_key 参数。")
@@ -142,15 +146,25 @@ class AnthropicProvider:
         """创建消息（对齐 client.messages.create），内置 trace + tool_use 重试。"""
         from joker_test.trace import trace_llm  # noqa: PLC0415
 
+        # Anthropic 约束：thinking 启用时 max_tokens 必须 > thinking.budget_tokens
+        # （thinking 预算含在 max_tokens 总量内）。默认值或调用方传入值过小时自动抬高，
+        # 否则真 Claude 端点会 400（MiMo 等宽松端点不校验，但换端点即炸）。
+        effective_max = max_tokens or self._max_tokens
+        if self._thinking_enabled and effective_max <= self._thinking_budget_tokens:
+            effective_max = self._thinking_budget_tokens + 4096
+
         kwargs: dict[str, Any] = {
             "model": model or self._model,
-            "max_tokens": max_tokens or self._max_tokens,
+            "max_tokens": effective_max,
             "messages": messages,
         }
         if tools:
             kwargs["tools"] = tools
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
+
+        if self._thinking_enabled:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": self._thinking_budget_tokens}
 
         # tool_use 自动重试
         retry_messages = messages
@@ -185,8 +199,12 @@ class AnthropicProvider:
             # 有 tools 但无 tool_use block → 重试
             if tools and not _has_tool_use(result) and attempt < 2:
                 _LOGGER.warning("tool_use 未返回（attempt %d），重试", attempt + 1)
+                # 剥离 thinking block：_response_to_dict 丢了 signature 字段，
+                # 而 Anthropic 要求回传 thinking 必须带完整 signature，否则 400。
+                # 与主路径（不回传 thinking）保持一致。
+                clean_content = [b for b in result["content"] if b.get("type") != "thinking"]
                 retry_messages = list(messages) + [
-                    {"role": "assistant", "content": result["content"]},
+                    {"role": "assistant", "content": clean_content},
                     {"role": "user", "content": [{"type": "text", "text": "请使用工具输出动作。"}]},
                 ]
                 kwargs["messages"] = retry_messages
@@ -255,6 +273,11 @@ def _response_to_dict(response: Any) -> dict[str, Any]:
                 "type": "tool_use",
                 "name": block.name,
                 "input": block.input,
+            })
+        elif block.type == "thinking":
+            result["content"].append({
+                "type": "thinking",
+                "thinking": block.thinking,
             })
     return result
 

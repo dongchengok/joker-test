@@ -1,4 +1,4 @@
-"""四阶段探索式测试流水线。"""
+"""五阶段探索式测试流水线。"""
 from joker_test.pipeline.base import AgenticOrchestrator, Stage, build_orchestrator
 from joker_test.pipeline.types import (
     ExecuteResult,

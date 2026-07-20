@@ -16,7 +16,7 @@
 
 ## 2. 已完成能力（M0-M6 + 探索流水线）
 
-> 以下能力均已实现并有测试覆盖（176 个测试，74 源文件，8600+ 行）。
+> 以下能力均已实现并有测试覆盖（231 个测试，76 源文件，7500+ 行）。
 
 ### 2.1 能力清单
 
@@ -90,7 +90,7 @@
 
 | 任务 | 说明 | 状态 |
 |---|---|---|
-| B1. LLMExplorer 探索深度 | 重写 LLMExplorer 为策略外壳 + ExploreStrategy 协议（ConversationStrategy 默认，对齐 Open-AutoGLM / ReactStateStrategy 对比基准 ReAct+状态机）。目标驱动(intent) + 路径回溯 + 动作空间扩展(swipe/long_press) + StateMap 改名。196 测试全绿。 | ✅ |
+| B1. LLMExplorer 探索深度 | 重写 LLMExplorer 为策略外壳 + ExploreStrategy 协议（ConversationStrategy 默认，对齐 Open-AutoGLM / ReactStateStrategy 对比基准 ReAct+状态机）。目标驱动(intent) + 路径回溯 + 动作空间扩展(swipe/long_press) + StateMap 改名。231 测试全绿。 | ✅ |
 | B2. 固化质量提升 | RecordedFlowGenerator 的语义化准确度（OCR 匹配阈值调优）+ 试跑回喂闭环（TestCaseVerifier 接入 CLI） | ⬜ |
 | B3. 反思维度扩展 | ReflectStage 加入覆盖度评估（UIMap 已探索界面/元素占比）、断言强度分析（值断言>存在性>无断言） | ⬜ |
 | B4. ExploreReporter Html 可视化 | 当前只输出 Json，补 Html（探索轨迹时间线 + 阶段覆盖 + 风险列表） | ⬜ |

@@ -51,31 +51,32 @@ def build_user_message(
 
 
 def format_trace_messages(messages: list[dict[str, Any]]) -> str:
-    """把 messages 序列化为可读的调试字符串（截断图片数据）。
+    """把 messages 序列化为可读的调试字符串（截断图片数据，保留完整文本）。
 
     供 provider 内部调 trace_llm(prompt_dump=...) 用。
-    图片只显示类型和大小，文本截断 500 字。
+    图片只显示类型和大小（base64 太长）；文本内容完整保留（trace 是诊断用的，
+    截断会导致看不到完整的 OCR 元素列表等关键信息）。
     """
     parts: list[str] = []
     for msg in messages:
         role = msg.get("role", "?")
         content = msg.get("content", "")
         if isinstance(content, str):
-            parts.append(f"[{role}] {content[:500]}")
+            parts.append(f"[{role}] {content}")
         elif isinstance(content, list):
             texts: list[str] = []
             for block in content:
                 if isinstance(block, dict):
                     btype = block.get("type", "")
                     if btype == "text" or "text" in block:
-                        texts.append(block.get("text", "")[:200])
+                        texts.append(block.get("text", ""))
                     elif btype == "image":
                         src = block.get("source", {})
                         texts.append(f"[图片: {src.get('media_type', '?')} {len(src.get('data', ''))}B]")
                     elif btype == "tool_use":
                         inp = block.get("input", {})
-                        texts.append(f"[tool_use: {block.get('name', '?')} {json.dumps(inp, ensure_ascii=False)[:200]}]")
-            parts.append(f"[{role}] {' '.join(texts)[:500]}")
+                        texts.append(f"[tool_use: {block.get('name', '?')} {json.dumps(inp, ensure_ascii=False)}]")
+            parts.append(f"[{role}] {' '.join(texts)}")
     return "\n\n".join(parts)
 
 

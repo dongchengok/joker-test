@@ -411,6 +411,8 @@ class LLMProvider(Protocol):
 
 **tool_use 结构化输出**：`create(tools=[...], tool_choice={"type":"tool","name":"..."})` 强制结构化输出，API 层 constrained decoding 保证格式。tool_use 未返回时自动重试 2 次。
 
+**thinking 推理**：`AnthropicProvider` 支持 extended thinking（构造参数 `thinking_enabled` + `thinking_budget_tokens`，默认开启 8000 tokens）。thinking 内容仅写入 trace 的 LLM 调用记录，**不回传进 assistant 消息**（避免违反 Anthropic 协议、防止 context 膨胀）。配置走 `config.llm.thinking`（见 `config.py`）。
+
 **代码**：`llm/base.py`（Protocol + build_user_message + format_trace_messages）、`llm/providers/anthropic/`（AnthropicProvider）、`llm/providers/mock/`（MockProvider）
 
 ### 5.4 操作录制（flow 包）
@@ -439,7 +441,7 @@ class LLMProvider(Protocol):
 
 **注意**：`charter_gen.py` 运行时依赖外部 `SpecOps-src`（调 AWS Bedrock）。独立探索流水线（pipeline）不走 SpecOps-src，用 AnthropicProvider。
 
-**代码**：`charter_gen.py`、`prompts/`（模板已抽离到独立包）
+**代码**：`charter_gen.py`、`prompts/`（三级结构：`templates/` Jinja2 模板 + `data/` yaml 数据 + `constants/` md 常量，`loader.py` 统一加载渲染）
 
 ### 5.6 冒烟线（Python + pytest + Backend）
 
@@ -727,7 +729,8 @@ class LLMProvider(Protocol):
   - `trace.html`：统一可折叠时间线——每个事件都是 `<details>` 卡片，summary 显示缩略信息+状态灯（🟢成功/🔴失败/🟡不确定/⚪中性），点击展开看完整细节。LLM 调用展开后显示完整 prompt/reply（左右并排）
   - `events.jsonl`：事件流（grep/jq 友好）
   - `summary.json`：数字摘要（CI 判断用）
-- **打点覆盖**：`perceive`（含截图尺寸+OCR 坐标）/ `explore_think` / `dispatch_click` / `dispatch_swipe` / `dispatch` / `action_result` / `repeat_warning` / `plugin_inject` / `plugin_validate` / 每次 LLM `create`
+- **打点 API**：模块级函数仅 5 个——`trace_event`（通用事件）/ `trace_llm`（每次 LLM `create` 自动调用）/ `trace_stage`（Stage 阶段）/ `trace_error` / `trace_finalize`。业务代码调这些，零参数零感知
+- **event 分类**（`trace_event` 的 `event_type` 取值）：`perceive`（含截图尺寸+OCR 坐标）/ `explore_think` / `dispatch_click` / `dispatch_swipe` / `dispatch` / `action_result` / `repeat_warning` / `plugin_inject` / `plugin_validate`
 
 ### 11.10 测试规范
 

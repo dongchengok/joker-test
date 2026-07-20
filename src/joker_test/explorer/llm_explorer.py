@@ -84,7 +84,7 @@ class LLMExplorer:
         screenshot_path = self._save_screenshot(screenshot, ctx.step)
 
         perception = self._perceive(screenshot)
-        # 截图尺寸 + OCR 文本（诊断坐标问题的必需信息）
+        # 截图尺寸（OCR 文字坐标已由 OCRPlugin 注入到 LLM prompt，trace 不重复存）
         try:
             sh, sw = screenshot.shape[:2]
         except Exception:  # noqa: BLE001
@@ -92,8 +92,6 @@ class LLMExplorer:
         self._trace("perceive", {
             "screenshot_size": [sw, sh],
             "screenshot_path": str(screenshot_path) if screenshot_path else "",
-            "ocr_texts": getattr(perception, "texts", [])[:15],
-            "text_elements": getattr(perception, "text_elements", [])[:15],
         })
 
         try:
@@ -134,19 +132,12 @@ class LLMExplorer:
             "effective": result.success and not result.screen_changed,
         })
 
-        # 插件校验（先于 on_action_executed）：语义判断操作是否有效，
-        # 反馈传给策略供 stale_count 判断 + 注入下一步 prompt
-        validate_feedback = ""
+        # Plugin validate: keep the call for future plugins, but do NOT inject
+        # feedback into prompt (following Open-AutoGLM: LLM reasons on its own)
         if self._plugin_manager is not None:
-            validate_feedback = self._plugin_manager.validate(
-                decision, result, backend=self._backend
-            )
-            if validate_feedback:
-                self._trace("plugin_validate", {"feedback": validate_feedback})
-            if hasattr(self._strategy, "_last_validate_feedback"):
-                self._strategy._last_validate_feedback = validate_feedback  # noqa: SLF001
+            self._plugin_manager.validate(decision, result, backend=self._backend)
 
-        self._strategy.on_action_executed(decision, result, validate_feedback=validate_feedback)
+        self._strategy.on_action_executed(decision, result)
 
         if self._recorder is not None and result.success:
             self._record(decision, result)

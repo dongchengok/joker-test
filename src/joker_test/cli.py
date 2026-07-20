@@ -6,7 +6,7 @@ pyproject.toml 已注册 joker-test = "joker_test.cli:main"。
   - record：录制操作流程并生成 test_case（explore --mode manual 的快捷方式）
   - explore-ui：界面探索（产出 StateMap，explore --no-solidify 的快捷方式）
   - run-smoke：跑冒烟测试 + 报告（脱离 LLM）
-  - run-all：一键编排（AgenticOrchestrator 四阶段流水线）
+  - run-all：一键编排（AgenticOrchestrator 五阶段流水线）
   - generate-charter：生成 Charter（委托 charter_gen）
   - validate：校验 charter/test 文件
 无参数等价 run-all。
@@ -235,7 +235,7 @@ def _cmd_explore(args: argparse.Namespace) -> int:
 
 
 def _cmd_run_all(args: argparse.Namespace) -> int:
-    """一键编排：AgenticOrchestrator 四阶段流水线。"""
+    """一键编排：AgenticOrchestrator 五阶段流水线。"""
     from joker_test.pipeline import ExploreConfig, build_orchestrator  # noqa: PLC0415
 
     game_meta: dict = {}

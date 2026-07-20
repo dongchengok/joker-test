@@ -15,6 +15,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
+from joker_test.config import load_config
 from joker_test.executor import set_active_backend
 from joker_test.executor.backends.airtest import AirtestBackend
 from joker_test.explorer.conversation_strategy import ConversationStrategy
@@ -35,8 +36,18 @@ def main() -> int:
     model = cfg.get("MIMO_MODEL", "mimo-v2.5")
     print(f"LLM: AnthropicProvider model={model}")
 
-    # 用 内置 trace，让 trace 记录 LLM 调用
-    provider = AnthropicProvider()
+    # 从配置文件读取 thinking 设置（默认 enabled=true, budget_tokens=8000）
+    config = load_config()
+    thinking_cfg = config.get("llm", {}).get("thinking", {})
+    thinking_enabled = thinking_cfg.get("enabled", True)
+    thinking_budget = thinking_cfg.get("budget_tokens", 8000)
+    print(f"Thinking: enabled={thinking_enabled}, budget_tokens={thinking_budget}")
+
+    # 用内置 trace，让 trace 记录 LLM 调用
+    provider = AnthropicProvider(
+        thinking_enabled=thinking_enabled,
+        thinking_budget_tokens=thinking_budget,
+    )
 
     ocr = RapidOCRProvider()
 
@@ -48,8 +59,9 @@ def main() -> int:
     print("✓ SPD 已连接")
 
     intent = (
-        "进入游戏设置界面，找到音频设置，调整音量。"
+        "进入游戏设置界面，找到音频设置，将音乐音量从10降低到约5。"
         "注意：绝对不要点击全屏模式。SPD 的音量设置在音频设置里，不在显示设置里。"
+        "完成后输出 goal_completed=true。"
     )
     flow_dir = REPO / "flows" / f"e2e_conversation_{int(time.time())}"
     flow_dir.mkdir(parents=True, exist_ok=True)

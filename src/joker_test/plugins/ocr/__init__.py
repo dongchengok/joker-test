@@ -13,7 +13,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 # OCR 噪声过滤规则（感知层知识，集中管理）
 # 单字符符号（窗口装饰 ×口□ 等）
 _MAX_NOISE_LEN = 1
@@ -43,12 +42,10 @@ class OCRPlugin:
         return "ocr"
 
     def inject_system_prompt(self) -> str:
-        """告诉 LLM 界面元素的坐标格式。"""
-        return (
-            "界面元素格式：文字@(x,y)，x/y 是归一化坐标[0,1]"
-            "（左0右1，上0下1），表示该文字在屏幕上的中心位置。\n"
-            "点击有文字的按钮时，直接用它的坐标作为 click 的 x/y，不需要自己估算。"
-        )
+        """告诉 LLM OCR 坐标是辅助参考（文字位置，非控件手柄位置）。"""
+        from joker_test.prompts.loader import load_ocr_format_prompt  # noqa: PLC0415
+
+        return load_ocr_format_prompt()
 
     def inject_step(self, screenshot: Any, backend: Any, ctx: Any) -> str:
         """从 backend.state 提取 OCR 文字+坐标（过滤噪声后），返回格式化文本。"""
@@ -87,31 +84,11 @@ class OCRPlugin:
         return ""
 
     def validate(self, decision: Any, result: Any, backend: Any = None) -> str | None:
-        """用 OCR 文本变化判断操作是否有效。
+        """OCR plugin does not make semantic judgments.
 
-        像素 diff 无法区分"装饰动画噪声"和"真实界面变化"（如 SPD 主菜单水波纹
-        每帧产生 0.1+ diff）。OCR 文本变化是更可靠的语义信号：文本增删改 = 界面
-        真的切换了。
-
-        操作成功但文本没变 → 提示 LLM 操作可能无效，换种方法。
+        Following Open-AutoGLM/OpenCode: the system collects data (inject_step
+        provides OCR text+coordinates), the LLM reasons from the data.
         """
-        if result is None or not result.success or backend is None:
-            return None
-
-        # 读当前帧（操作后）的 OCR 文本
-        try:
-            current_texts = _filter_noise_texts(backend.state.texts)
-        except Exception:  # noqa: BLE001
-            return None
-
-        # 与上一步（inject_step 缓存的）比较
-        if current_texts == self._last_texts:
-            # OCR 文本没变，但像素 diff 显示"变化"→ 可能是装饰噪声
-            if result.screen_changed:
-                return (
-                    "操作后界面文字未变（像素变化可能是装饰动画噪声），"
-                    "操作可能未生效。滑块/旋钮不能用 click 点击，必须用 swipe 拖拽。"
-                )
         return None
 
 

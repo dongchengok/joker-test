@@ -392,21 +392,12 @@ class Tracer:
             )
         elif etype == "perceive":
             size = data.get("screenshot_size", [])
-            elements = data.get("text_elements", [])
-            texts = data.get("ocr_texts", [])
             size_str = f"{size[0]}×{size[1]}" if len(size) >= 2 else "?"
-            if elements:
-                elems_str = " ".join(
-                    f"{html.escape(str(e.get('text', '')))[:8]}@({e.get('x', 0):.2f},{e.get('y', 0):.2f})"
-                    for e in elements[:6]
-                )
-                summary_parts.append(
-                    f"step={data.get('step', '?')} 截图={size_str} 元素={len(elements)}项: {elems_str}"
-                )
-            else:
-                summary_parts.append(
-                    f"step={data.get('step', '?')} 截图={size_str} OCR={len(texts)}项"
-                )
+            screenshot = data.get("screenshot_path", "")
+            screenshot_note = f" 截图={screenshot}" if screenshot else ""
+            summary_parts.append(
+                f"step={data.get('step', '?')} 截图={size_str}{screenshot_note}"
+            )
         elif etype == "explore_think":
             x, y = data.get("x"), data.get("y")
             coords = ""
@@ -419,10 +410,11 @@ class Tracer:
                 f"target={html.escape(str(data.get('target', '') or '(无)'))[:20]} {coords}"
             )
         elif etype == "plugin_inject":
+            content_preview = html.escape(str(data.get("content", ""))[:60])
             summary_parts.append(
                 f"{html.escape(str(data.get('plugin', '')))} "
                 f"注入 {html.escape(str(data.get('inject_point', '')))} "
-                f"({data.get('length', 0)} 字符)"
+                f"({data.get('length', 0)}字): {content_preview}"
             )
         elif etype == "plugin_validate":
             summary_parts.append(
@@ -485,6 +477,20 @@ class Tracer:
   <div><h4>Prompt ({len(prompt_full)} 字)</h4><pre>{html.escape(prompt_full or "(空)")}</pre></div>
   <div><h4>Reply ({len(reply_full)} 字)</h4><pre>{html.escape(reply_full or "(空)")}</pre></div>
 </div>"""
+        # perceive 事件：展开显示截图（有路径时）
+        if etype == "perceive":
+            screenshot_path = data.get("screenshot_path", "")
+            if screenshot_path:
+                # 相对路径：trace 目录在 traces/<dir>/，截图在 flows/<dir>/screenshots/
+                # 用相对路径让 HTML 可直接打开
+                return f'<img src="file:///{html.escape(screenshot_path)}" style="max-width:100%;border:1px solid #eee;border-radius:4px;">'
+            return "<pre>（无截图）</pre>"
+        # plugin_inject 事件：展开显示注入的具体内容
+        if etype == "plugin_inject":
+            content = data.get("content", "")
+            if content:
+                return f"<pre>{html.escape(content)}</pre>"
+            return "<pre>（无注入内容）</pre>"
         # 其他事件：完整 JSON dump
         pretty = json.dumps(data, ensure_ascii=False, indent=2)
         return f"<pre>{html.escape(pretty)}</pre>"

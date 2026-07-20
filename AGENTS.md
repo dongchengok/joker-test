@@ -29,7 +29,7 @@ src/joker_test/                # 全链路已实现
   explorer/                    # 界面探索器（UIExplorer DFS + LLMExplorer agentic loop + ExploreStrategy 双策略 + StateMap）
   generator/                   # 用例生成（StateMap→LLM→pytest代码+spec）
   reporters/                   # 报告（Protocol + Json/Html/Multi + ExploreReporter 综合探索报告）
-  prompts/                     # prompt 工程化（Jinja2 + XML 标签 + md/yaml）
+  prompts/                     # prompt 工程化（templates/ Jinja2 + data/ yaml + constants/ md 常量，loader 统一加载）
   plugins/                     # 插件系统（AgentPlugin 4注入点 + PluginManager + OCRPlugin + loader）
     base.py                    # AgentPlugin Protocol + DefaultAgentPlugin
     manager.py                 # PluginManager（拼接注入内容 + 异常隔离）
@@ -106,7 +106,7 @@ python -m joker_test.charter_gen \
 ## 工作约定
 
 - 改 Charter 生成逻辑前，先读 `DESIGN.md` §5.5 + ADR 列表，确认不违背已采纳决策。
-- `BUG_DEFINITION`、`ANALYST_CHECKLIST`、`DEFAULT_PERSONAS`（`charter_gen.py` 顶部常量）是 prompt 工程核心，改动要谨慎。
+- `BUG_DEFINITION`、`ANALYST_CHECKLIST`（`prompts/constants/*.md`）、`DEFAULT_PERSONAS`（`prompts/data/personas.yaml`）是 prompt 工程核心，由 `prompts/loader.py` 统一加载，改动要谨慎。
 - 新增 Charter schema 字段时，同步更新 `DESIGN.md` §6.1 和 `CLAUDE.md`。
 - **类应状态自洽**：实现新模块时让每个类自持所需上下文，避免互相反向引用形成网状依赖。
 - 交流一律用中文。

@@ -20,33 +20,11 @@ from joker_test.explorer.strategy import (
 )
 from joker_test.explorer.types import Screen, StateMap
 from joker_test.llm.base import LLMProvider, Message
+from joker_test.prompts.loader import load_full_exploration_prompt
 
 _LOGGER = logging.getLogger(__name__)
 
-_BASE_PROMPT = """你在探索一个游戏界面，目标是完成任务。每步你看到截图和界面元素信息，推理后输出动作。
-
-用 <think>推理</think><answer>{json}</answer> 回答。json 只能是以下动作之一：
-
-1. 点击按钮：{"action":"click","target":"按钮文字","x":0.5,"y":0.5,"description":"..."}
-2. 按键：{"action":"press_key","target":"escape","description":"..."}
-3. 输入文字：{"action":"type_text","target":"要输入的文字","description":"..."}
-4. 滑动：{"action":"swipe","target":"left","x":0.5,"y":0.5,"description":"向左拖动滑块"}
-5. 翻页：{"action":"scroll","target":"down","description":"向下翻页"}
-6. 长按：{"action":"long_press","target":"图标描述","description":"..."}
-7. 返回上级：{"action":"back","description":"返回上级界面"}
-8. 停止探索：{"action":"stop","description":"目标完成/无法继续"}
-
-规则：
-- action 必须是上面 8 个之一，不要发明其他动作名
-- click 的 target 填按钮上的文字；有文字的按钮直接用界面元素给的坐标作为 x/y
-- 坐标是归一化 [0,1]（左0右1，上0下1），不要输出绝对像素值
-- swipe 的 target 填方向 left/right/up/down，x/y 填滑块手柄的当前坐标（从截图上识别手柄位置）
-- 音量滑块、进度条等水平控件**必须用 swipe 拖拽**，绝不能用 click 点击轨道
-  （点击轨道不会移动手柄）。拖拽起点 = 手柄当前位置，终点 = 手柄 + 方向偏移
-- 不要点击窗口的关闭(×)/最小化/最大化按钮
-- 不要重复点击同一个按钮，界面没变化就换操作
-- 绝对不要点击全屏模式
-- goal_progress 描述当前进度，goal_completed 为 true 时表示目标完成"""
+_BASE_PROMPT = load_full_exploration_prompt()
 
 
 class ConversationStrategy:
@@ -67,9 +45,8 @@ class ConversationStrategy:
         self._screens: list[Screen] = []
         self._goal_completed: bool = False
         self._initialized = False
-        self._last_validate_feedback: str = ""
-        # 上一步动作结果反馈（让 LLM 知道操作是否生效，避免盲目重复无效操作）
-        self._last_action_feedback: str = ""
+        # 上一步操作信息（纯事实，不做判断），供下一步 _build_step_text 注入 observation 行
+        self._last_action_info: str = ""
         self._stale_count: int = 0  # 连续无效（界面无变化）次数
 
     def decide(
@@ -115,9 +92,19 @@ class ConversationStrategy:
         # 从 tool_use block 提取结构化动作
         decision = self._parse_tool_use(reply, screenshot)
 
-        # 追加 assistant 消息到历史
+        # 追加 assistant 消息到历史（结构化 XML，不含 thinking）
+        # thinking 内容仅存 trace/dump，不回传 API（Anthropic 协议要求 ephemeral）
+        action_lines = [
+            f"<action>{decision.action}</action>",
+        ]
+        if decision.target:
+            action_lines.append(f"<target>{decision.target}</target>")
+        if decision.x is not None and decision.y is not None:
+            action_lines.append(f"<coords>{decision.x:.3f},{decision.y:.3f}</coords>")
+        if decision.goal_progress:
+            action_lines.append(f"<progress>{decision.goal_progress}</progress>")
         self._messages.append(
-            {"role": "assistant", "content": [{"type": "text", "text": decision.think or decision.action}]}
+            {"role": "assistant", "content": [{"type": "text", "text": "\n".join(action_lines)}]}
         )
 
         if decision.goal_completed:
@@ -127,6 +114,15 @@ class ConversationStrategy:
         self._maybe_add_screen(perception, ctx)
 
         return decision
+
+    @staticmethod
+    def _extract_thinking(msg: dict) -> str:
+        """Extract thinking text from API response thinking blocks."""
+        parts = []
+        for block in msg.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "thinking":
+                parts.append(block.get("thinking", ""))
+        return "\n".join(parts)
 
     def _parse_tool_use(self, msg: Any, screenshot: Any = None) -> StepDecision:
         """从 LLM 回复的 tool_use block 提取结构化动作。
@@ -139,8 +135,9 @@ class ConversationStrategy:
                 action = normalize_action(inp.get("action", "stop"))
                 target = inp.get("target", "")
                 x, y = parse_coords(inp, screenshot)
+                think = ConversationStrategy._extract_thinking(msg) or inp.get("think", "")
                 return StepDecision(
-                    think=inp.get("think", ""),
+                    think=think,
                     action=action,
                     stop=action == "stop",
                     goal_progress=inp.get("goal_progress", ""),
@@ -202,34 +199,32 @@ class ConversationStrategy:
         result: ActionResult,
         validate_feedback: str = "",
     ) -> None:
-        """记录上一步动作的通用结果（执行失败/连续无效计数）。
+        """Record a pure-fact summary of the last action (no judgments).
 
-        语义层的有效性判断（"OCR 文本是否变了"等）由插件 validate 负责，
-        validate_feedback 传入让策略更准确地判断 stale（插件说无效 → 计 stale，
-        即使像素 screen_changed=True）。
-
-        Args:
-            decision: 本步决策
-            result: 执行结果（像素 diff 层）
-            validate_feedback: 插件语义校验反馈（空串 = 无问题/无插件）
+        Following Open-AutoGLM/OpenCode: system provides facts, LLM reasons.
+        The observation line goes into the next step via _build_step_text.
         """
         if not result.success:
-            self._last_action_feedback = f"⚠ 上一步执行失败（{result.error or '未知错误'}），请换个方法。"
+            self._last_action_info = (
+                f"{decision.action} 执行失败({result.error or '未知'})"
+            )
             self._stale_count += 1
             return
 
-        # 插件判定操作无效（如 OCR 文本没变）→ 计 stale，即使像素 diff 说变了
-        operation_effective = result.screen_changed and not validate_feedback
+        # Build pure fact summary line
+        parts = [decision.action]
+        if decision.target:
+            parts.append(decision.target[:15])
+        elif decision.x is not None and decision.y is not None:
+            parts.append(f"({decision.x:.2f},{decision.y:.2f})")
+        parts.append(f"diff={result.pixel_diff_ratio:.3f}")
+        self._last_action_info = " ".join(parts)
 
-        if operation_effective:
+        # Only track stale for should_stop, no feedback text generation
+        if result.screen_changed:
             self._stale_count = 0
-            self._last_action_feedback = ""
         else:
             self._stale_count += 1
-            if self._stale_count >= 2:
-                self._last_action_feedback = (
-                    f"⚠ 连续 {self._stale_count} 步操作无效果，可能陷入循环，请换一种方法。"
-                )
 
     def should_stop(self) -> bool:
         # 连续 5 次无效操作 → 判定卡死，停止避免浪费 LLM 调用
@@ -258,17 +253,17 @@ class ConversationStrategy:
 
     def _build_step_text(self, perception: Any, ctx: ExploreContext, screenshot: Any = None) -> str:
         base = f"目标: {self._intent}\n步数: {ctx.step}/{ctx.max_steps}"
-        # 上一步动作反馈（策略通用反馈 + 插件语义反馈，都注入引导 LLM 换方法）
-        feedbacks = [f for f in (self._last_action_feedback, self._last_validate_feedback) if f]
-        if feedbacks:
-            base = f"上一步反馈: {'；'.join(feedbacks)}\n{base}"
+        # Observation line: pure facts from last action (no judgment, no feedback)
+        if self._last_action_info:
+            base = f"[上一步] {self._last_action_info}\n{base}"
+            self._last_action_info = ""
 
-        # 有 plugin_manager → 走插件注入
+        # Plugin-managed injection path
         if self._plugin_manager is not None:
             return self._plugin_manager.build_step_text(
                 screenshot, ctx.backend, ctx, base, validate_feedback="",
             )
-        # 无 plugin_manager → 降级到原有逻辑（向后兼容）
+        # Fallback: no plugin manager
         parts = [base]
         if perception is not None:
             elements = getattr(perception, "text_elements", [])

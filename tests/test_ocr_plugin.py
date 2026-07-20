@@ -6,12 +6,18 @@ from joker_test.executor.base import BBox
 from joker_test.plugins.ocr import OCRPlugin
 
 
-def test_inject_system_prompt_has_format_explanation():
-    """系统提示词包含坐标格式说明。"""
+def test_inject_system_prompt_explains_auxiliary_role():
+    """系统提示词说明 OCR 坐标是辅助参考，区分按钮（可用）和滑块（不可用）。"""
     p = OCRPlugin()
     frag = p.inject_system_prompt()
+    # 基本格式说明仍在
     assert "文字@" in frag
     assert "归一化" in frag or "[0,1]" in frag
+    # 辅助定位说明
+    assert "辅助" in frag
+    # 区分按钮 vs 图形控件
+    assert "按钮" in frag
+    assert "滑块" in frag
 
 
 def test_inject_step_with_fake_backend():

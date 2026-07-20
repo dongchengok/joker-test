@@ -72,6 +72,26 @@ def load_analyst_checklist() -> list[str]:
     return [line for line in text.splitlines() if line.strip()]
 
 
+def load_exploration_system_prompt() -> str:
+    """加载探索主 prompt（任务描述 + 动作格式 + 基础规则）。"""
+    return load_constant("exploration_system")
+
+
+def load_ui_interaction_guide() -> str:
+    """加载 UI 元素交互指南（按钮/滑块/进度条/旋钮/输入框）。"""
+    return load_constant("ui_interaction")
+
+
+def load_ocr_format_prompt() -> str:
+    """加载 OCR 坐标格式说明（文字@坐标的辅助参考解释）。"""
+    return load_constant("ocr_format")
+
+
+def load_full_exploration_prompt() -> str:
+    """加载完整探索系统提示词 = 主 prompt + UI 交互指南。"""
+    return load_exploration_system_prompt() + "\n\n" + load_ui_interaction_guide()
+
+
 # ============== 数据加载 ==============
 
 @lru_cache(maxsize=8)
@@ -202,6 +222,10 @@ __all__ = [
     "load_analyst_checklist",
     "load_default_personas",
     "load_default_heuristics",
+    "load_exploration_system_prompt",
+    "load_ui_interaction_guide",
+    "load_ocr_format_prompt",
+    "load_full_exploration_prompt",
     "render_architect_prompt",
     "render_analyst_prompt",
     "render_smoke_test_prompt",

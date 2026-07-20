@@ -17,6 +17,12 @@ _DEFAULT_CONFIG: dict = {
     "max_steps": 20,
     "backend_name": "fake",
     "window_title": "",
+    "llm": {
+        "thinking": {
+            "enabled": True,
+            "budget_tokens": 8000,
+        }
+    },
 }
 
 
