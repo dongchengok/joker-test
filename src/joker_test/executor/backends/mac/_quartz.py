@@ -11,8 +11,11 @@ macOS 专属。Quartz 模块级 import + ImportError 兜底（仿 airtest/backen
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+_LOGGER = logging.getLogger(__name__)
 
 try:
     import Quartz
@@ -144,9 +147,31 @@ def _capture_via_screencapture(window_id: int) -> ndarray:
 def activate_app(pid: int) -> None:
     """把指定 PID 的 App 窗口置前（点击事件发给最上层窗口，必须先置前）。
 
+    优先 AppleScript System Events frontmost：实测对 java CLI 进程（SPD）有效，
+    而 NSRunningApplication.activateWithOptions_ 对非 bundle 进程经常不生效。
+    AppleScript 失败时回退 NSRunningApplication。
+
     Args:
         pid: find_window 返回的 ownerPID。
     """
+    import subprocess  # noqa: PLC0415
+
+    try:
+        result = subprocess.run(
+            [
+                "osascript", "-e",
+                f'tell application "System Events" to set frontmost of '
+                f"(first process whose unix id is {pid}) to true",
+            ],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return
+        _LOGGER.debug("AppleScript 置前失败: %s", result.stderr.decode(errors="replace")[:100])
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("AppleScript 置前异常: %s", e)
+
     from AppKit import (  # noqa: PLC0415
         NSApplicationActivateIgnoringOtherApps,
         NSRunningApplication,
@@ -175,17 +200,24 @@ KEYCODES: dict[str, int] = {
 def post_click(x: float, y: float) -> None:
     """在全局 point 坐标 (x, y) 单击左键。
 
-    down/up 之间留 0.1s：实测 SPD（libGDX 按帧轮询输入）会丢掉同帧内的
-    down+up 瞬时点击，press 必须跨至少一帧。
+    两个实测约束（SPD/libGDX 验证）：
+    - 先投 mouseMoved：GLFW 内部光标位置由移动事件更新，直接 down/up 会按
+      旧光标位置处理点击（点在错误的坐标上）。
+    - down/up 之间留 0.15s：libGDX 按帧轮询输入，间隔过短的点击会被丢掉。
     """
     import time  # noqa: PLC0415
 
     point = (x, y)
+    move = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventMouseMoved, point, Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
+    time.sleep(0.05)
     down = Quartz.CGEventCreateMouseEvent(
         None, Quartz.kCGEventLeftMouseDown, point, Quartz.kCGMouseButtonLeft
     )
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
-    time.sleep(0.1)
+    time.sleep(0.15)
     up = Quartz.CGEventCreateMouseEvent(
         None, Quartz.kCGEventLeftMouseUp, point, Quartz.kCGMouseButtonLeft
     )
@@ -193,21 +225,29 @@ def post_click(x: float, y: float) -> None:
 
 
 def post_key(keycode: int) -> None:
-    """按一下指定键码（down + up，间隔 0.05s，理由同 post_click）。"""
+    """按一下指定键码（down + up，间隔 0.1s，理由同 post_click）。"""
     import time  # noqa: PLC0415
 
     down = Quartz.CGEventCreateKeyboardEvent(None, keycode, True)
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
-    time.sleep(0.05)
+    time.sleep(0.1)
     up = Quartz.CGEventCreateKeyboardEvent(None, keycode, False)
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
 
 
 def post_swipe(x1: float, y1: float, x2: float, y2: float, duration: float = 0.5) -> None:
-    """从 (x1, y1) 拖到 (x2, y2)（全局 point 坐标），duration 秒内完成。"""
+    """从 (x1, y1) 拖到 (x2, y2)（全局 point 坐标），duration 秒内完成。
+
+    起点先投 mouseMoved（理由同 post_click：GLFW 需先更新光标位置）。
+    """
     import time  # noqa: PLC0415
 
     steps = max(int(duration / 0.01), 2)
+    move = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventMouseMoved, (x1, y1), Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
+    time.sleep(0.05)
     down = Quartz.CGEventCreateMouseEvent(
         None, Quartz.kCGEventLeftMouseDown, (x1, y1), Quartz.kCGMouseButtonLeft
     )
@@ -227,9 +267,14 @@ def post_swipe(x1: float, y1: float, x2: float, y2: float, duration: float = 0.5
 
 
 def post_long_press(x: float, y: float, duration: float = 2.0) -> None:
-    """在 (x, y) 长按左键 duration 秒。"""
+    """在 (x, y) 长按左键 duration 秒。起点先投 mouseMoved（同 post_click）。"""
     import time  # noqa: PLC0415
 
+    move = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventMouseMoved, (x, y), Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
+    time.sleep(0.05)
     down = Quartz.CGEventCreateMouseEvent(
         None, Quartz.kCGEventLeftMouseDown, (x, y), Quartz.kCGMouseButtonLeft
     )

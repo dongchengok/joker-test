@@ -47,6 +47,7 @@ class MacBackend:
         self._ocr = ocr
         self._window_id: int | None = None
         self._bounds: tuple[float, float, float, float] | None = None  # point (x,y,w,h)
+        self._pid: int | None = None  # 窗口所属进程（输入前置前用）
         self._scale: float = 1.0  # 截图像素宽 / bounds point 宽（Retina=2.0）
         self._current_frame: NDArray | None = None  # type: ignore[valid-type]
         self._state: _MacState | None = None
@@ -67,6 +68,7 @@ class MacBackend:
                 "是否已授权当前终端（授权后需重启终端）。"
             )
         self._window_id, self._bounds, pid = found
+        self._pid = pid
         _quartz.activate_app(pid)
         time.sleep(0.5)  # 等窗口置前动画
         frame = self.screenshot()
@@ -83,6 +85,7 @@ class MacBackend:
     def close(self) -> None:
         self._window_id = None
         self._bounds = None
+        self._pid = None
         self._current_frame = None
 
     # ===== 感知 =====
@@ -93,7 +96,7 @@ class MacBackend:
             raise RuntimeError("未 connect，先调用 connect()")
         found = _quartz.find_window(self._window_title)  # 窗口可能移动/缩放
         if found is not None:
-            self._window_id, self._bounds, _ = found
+            self._window_id, self._bounds, self._pid = found
         frame = _quartz.capture_window(self._window_id)
         if self._bounds is not None and self._bounds[2] > 0:
             self._scale = frame.shape[1] / self._bounds[2]
@@ -112,11 +115,18 @@ class MacBackend:
         bx, by = self._bounds[0], self._bounds[1]
         return bx + x * w / self._scale, by + y * h / self._scale
 
+    def _before_input(self) -> None:
+        """输入前确保游戏在前台（CGEvent 对后台窗口首击只会聚焦，不会触发）。"""
+        if self._pid is not None:
+            _quartz.activate_app(self._pid)
+            time.sleep(0.15)
+
     def click(self, x: float, y: float) -> None:
         """归一化坐标点击。"""
         if not 0.0 <= x <= 1.0 or not 0.0 <= y <= 1.0:
             raise ValueError(f"click 坐标必须在 [0,1]，收到 ({x}, {y})")
         sx, sy = self._to_screen_point(x, y)
+        self._before_input()
         _quartz.post_click(sx, sy)
 
     def click_text(self, text: str) -> bool:
@@ -165,6 +175,7 @@ class MacBackend:
         keycode = _quartz.KEYCODES.get(key.lower())
         if keycode is None:
             raise ValueError(f"未知按键: '{key}'（已映射: {sorted(_quartz.KEYCODES)}）")
+        self._before_input()
         _quartz.post_key(keycode)
 
     def type_text(self, text: str) -> None:
@@ -174,11 +185,13 @@ class MacBackend:
         """滑动（归一化坐标 [0,1]）。"""
         sx1, sy1 = self._to_screen_point(x1, y1)
         sx2, sy2 = self._to_screen_point(x2, y2)
+        self._before_input()
         _quartz.post_swipe(sx1, sy1, sx2, sy2, duration=duration)
 
     def long_press(self, x: float, y: float, duration: float = 2.0) -> None:
         """长按（归一化坐标 [0,1]）。"""
         sx, sy = self._to_screen_point(x, y)
+        self._before_input()
         _quartz.post_long_press(sx, sy, duration=duration)
 
     # ===== 同步 =====

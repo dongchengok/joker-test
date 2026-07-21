@@ -133,3 +133,90 @@ def test_create_passes_system_as_top_level_param() -> None:
     assert captured.get("system") == "你是探索助手"
     roles = [m.get("role") for m in captured["messages"] if isinstance(m, dict)]
     assert "system" not in roles, "messages 数组不得含 role=system"
+
+
+def test_retry_escalates_tool_choice_to_any() -> None:
+    """auto 下模型纯文本回复时，第一次重试必须把 tool_choice 升级为强制 any。
+
+    背景：tool_choice=auto 下部分端点/模型会长上下文漂移成纯文本回复，
+    重试保持 auto 只会重复同样的漂移（真机实测 kimi-k3 连续 22 次未返回
+    tool_use）。升级为 any 后由 API 层 constrained decoding 强制返回 tool_use。
+    """
+    provider = _make_provider(thinking_enabled=True)
+    calls: list[dict] = []
+    responses = [
+        _response([_block("text", text="我直接文字回答")]),
+        _response([_block("tool_use", name="execute_action", input={"action": "stop"})]),
+    ]
+
+    def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)  # type: ignore[arg-type]
+        return responses[len(calls) - 1]
+
+    provider._client.messages.create = fake_create  # type: ignore[method-assign]
+
+    provider.create(
+        messages=_user_msg(), tools=[EXPLORE_TOOL_SCHEMA], tool_choice={"type": "auto"}
+    )
+
+    assert len(calls) == 2
+    assert calls[0]["tool_choice"] == {"type": "auto"}
+    assert calls[1]["tool_choice"] == {"type": "any"}, "第一次重试应升级为强制 any"
+
+
+def test_forced_tool_choice_400_falls_back_to_auto() -> None:
+    """强制 any 被端点 400 拒绝时，必须降回原始 tool_choice 继续重试。
+
+    真 Anthropic 端点 thinking 开启时不允许强制 tool_choice（400），
+    升级策略在该端点上必须无损降级，行为与升级前一致。
+    """
+    provider = _make_provider(thinking_enabled=True)
+    calls: list[dict] = []
+
+    class Fake400(Exception):
+        status_code = 400
+
+    outcomes: list[object] = [
+        _response([_block("text", text="no tool")]),
+        Fake400("thinking 时不允许强制 tool_choice"),
+        _response([_block("tool_use", name="execute_action", input={"action": "stop"})]),
+    ]
+
+    def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)  # type: ignore[arg-type]
+        outcome = outcomes[len(calls) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    provider._client.messages.create = fake_create  # type: ignore[method-assign]
+
+    provider.create(
+        messages=_user_msg(), tools=[EXPLORE_TOOL_SCHEMA], tool_choice={"type": "auto"}
+    )
+
+    assert len(calls) == 3, "升级 → 400 → 降回 auto 再试，共 3 次调用"
+    assert calls[1]["tool_choice"] == {"type": "any"}
+    assert calls[2]["tool_choice"] == {"type": "auto"}, "400 后必须降回原始 tool_choice"
+
+
+def test_caller_forced_tool_choice_not_escalated() -> None:
+    """调用方显式强制 tool_choice 时，重试不得改动它。"""
+    provider = _make_provider(thinking_enabled=True)
+    calls: list[dict] = []
+    forced = {"type": "tool", "name": "execute_action"}
+    responses = [
+        _response([_block("text", text="no tool")]),
+        _response([_block("tool_use", name="execute_action", input={"action": "stop"})]),
+    ]
+
+    def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)  # type: ignore[arg-type]
+        return responses[len(calls) - 1]
+
+    provider._client.messages.create = fake_create  # type: ignore[method-assign]
+
+    provider.create(messages=_user_msg(), tools=[EXPLORE_TOOL_SCHEMA], tool_choice=forced)
+
+    assert len(calls) == 2
+    assert calls[1]["tool_choice"] == forced, "显式强制的 tool_choice 不得被改动"

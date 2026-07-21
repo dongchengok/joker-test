@@ -170,13 +170,31 @@ class AnthropicProvider:
         if self._thinking_enabled:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": self._thinking_budget_tokens}
 
-        # tool_use 自动重试
+        # tool_use 自动重试：重试时把 tool_choice 升级为强制 any（模型漂移的硬兜底），
+        # 端点拒绝强制（如真 Anthropic 的 thinking 限制，400）时自动降回原始值。
         retry_messages = messages
+        original_tool_choice = kwargs.get("tool_choice")
+        caller_forced = (
+            isinstance(original_tool_choice, dict)
+            and original_tool_choice.get("type") not in (None, "auto", "none")
+        )
+        escalated = False
         for attempt in range(3):
             start = time.monotonic()
             try:
                 response = self._client.messages.create(**kwargs)
             except Exception as e:
+                if escalated and getattr(e, "status_code", None) == 400:
+                    _LOGGER.warning(
+                        "强制 tool_choice=any 被端点拒绝(400)，降回 %s 重试",
+                        original_tool_choice,
+                    )
+                    if original_tool_choice is None:
+                        kwargs.pop("tool_choice", None)
+                    else:
+                        kwargs["tool_choice"] = original_tool_choice
+                    escalated = False
+                    continue
                 duration = round(time.monotonic() - start, 2)
                 trace_llm(
                     _get_last_text(retry_messages)[:200] or "",
@@ -209,9 +227,16 @@ class AnthropicProvider:
                 clean_content = [b for b in result["content"] if b.get("type") != "thinking"]
                 retry_messages = list(messages) + [
                     {"role": "assistant", "content": clean_content},
-                    {"role": "user", "content": [{"type": "text", "text": "请使用工具输出动作。"}]},
+                    {"role": "user", "content": [{"type": "text", "text": (
+                        "你没有调用工具。必须调用提供的工具输出结果，禁止纯文本回复。"
+                    )}]},
                 ]
                 kwargs["messages"] = retry_messages
+                # 模型漂移（auto 下纯文本回复）→ 升级为强制工具调用。
+                # 强制被端点拒绝时上面的 except 会降回原始值。
+                if not caller_forced and not escalated:
+                    kwargs["tool_choice"] = {"type": "any"}
+                    escalated = True
                 continue
 
             return result

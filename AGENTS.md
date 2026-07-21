@@ -148,7 +148,8 @@ DESIGN.md                      # 架构权威文档（含 14 条 ADR + 工程规
 7. **全局 backend 注册**：`set_active_backend()` 在程序入口调用一次（CLI/conftest/pipeline）。测试间注意重置。
 8. **真机边界**：AirtestBackend 走 Win32 `PrintWindow`，窗口被完全遮挡/最小化时截图白屏/黑屏（G7）。
 9. **pytest 不收集 `Test*` 类**（`python_classes=[]`）：测试一律写成 `test_*` 函数。
-10. **macOS 真机（MacBackend）**：① 终端 App 需授权"屏幕录制"（截图）+"辅助功能"（CGEvent 输入），改完必须 ⌘Q 完全退出终端再重开；可用 `AXIsProcessTrusted()` 验证。② SPD 必须用 `scripts/start_spd_mac.sh` 启动：官方 .app 的 x86_64 launcher 会加载错误 natives 直接崩（glfwGetMonitorPos NPE），脚本用本地 arm64 JDK + 只保留 macos-arm64 natives；且 SPD 默认全屏会独占 Space 导致截图/点击投递不到，脚本会写 `fullscreen=false` 强制窗口模式。③ `post_click` 的 down/up 必须有间隔（libGDX 按帧轮询输入，瞬时点击会被丢）。④ 点击前要把游戏 App 置前（`activate_app` 对 java CLI 进程不可靠时可用 AppleScript System Events frontmost）。
+10. **macOS 真机（MacBackend）**：① 终端 App 需授权"屏幕录制"（截图）+"辅助功能"（CGEvent 输入），改完必须 ⌘Q 完全退出终端再重开；可用 `AXIsProcessTrusted()` 验证。② SPD 必须用 `scripts/start_spd_mac.sh` 启动：官方 .app 的 x86_64 launcher 会加载错误 natives 直接崩（glfwGetMonitorPos NPE），脚本用本地 arm64 JDK + 只保留 macos-arm64 natives；且 SPD 默认全屏会独占 Space 导致截图/点击投递不到，脚本会写 `fullscreen=false` 强制窗口模式。③ 点击前必须先投 `mouseMoved` 再 down/up（GLFW 靠移动事件更新光标位置，直接 down/up 会按旧光标坐标处理）且 down/up 间隔 ≥0.15s（libGDX 按帧轮询输入，瞬时点击会被丢）。④ 每次输入前把游戏置前（`activate_app` 用 AppleScript frontmost，NSRunningApplication 对 java CLI 进程不生效）。⑤ SPD 桌面版在主菜单按 escape 直接退出进程；首启标题界面的设置等按钮在可视区下方（intro 文本挤压），需先进一次地牢才能看到完整菜单。
+11. **LLM tool_use 漂移**：`tool_choice=auto` 下部分端点/模型在长上下文会纯文本回复不调工具（实测 kimi-k3 连续 22 次）。provider 重试时自动升级为强制 `{"type": "any"}`，端点 400（真 Anthropic thinking 限制）时无损降回。改 prompt 约束是辅助，API 层强制才是主修复。
 
 ## 8. 测试策略
 
