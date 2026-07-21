@@ -201,10 +201,9 @@ with tracer.stage("reset_game"):
 
     try:
         if _sys.platform == "darwin":
-            subprocess.run(["pkill", "-f", "ShatteredPD"], capture_output=True)
+            subprocess.run(["pkill", "-f", "DesktopLauncher"], capture_output=True)
             _time.sleep(2)
-            jar = str(REPO / ".test-targets" / "SPD-mac" / "ShatteredPD.jar")
-            subprocess.Popen(["java", "-jar", jar], cwd=os.path.dirname(jar))
+            subprocess.Popen(["bash", str(REPO / "scripts" / "start_spd_mac.sh")])
         else:
             subprocess.run(
                 ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"],

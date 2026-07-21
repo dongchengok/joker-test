@@ -173,18 +173,34 @@ KEYCODES: dict[str, int] = {
 
 
 def post_click(x: float, y: float) -> None:
-    """在全局 point 坐标 (x, y) 单击左键。"""
+    """在全局 point 坐标 (x, y) 单击左键。
+
+    down/up 之间留 0.1s：实测 SPD（libGDX 按帧轮询输入）会丢掉同帧内的
+    down+up 瞬时点击，press 必须跨至少一帧。
+    """
+    import time  # noqa: PLC0415
+
     point = (x, y)
-    for etype in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-        ev = Quartz.CGEventCreateMouseEvent(None, etype, point, Quartz.kCGMouseButtonLeft)
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+    down = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventLeftMouseDown, point, Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+    time.sleep(0.1)
+    up = Quartz.CGEventCreateMouseEvent(
+        None, Quartz.kCGEventLeftMouseUp, point, Quartz.kCGMouseButtonLeft
+    )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
 
 
 def post_key(keycode: int) -> None:
-    """按一下指定键码（down + up）。"""
-    for down in (True, False):
-        ev = Quartz.CGEventCreateKeyboardEvent(None, keycode, down)
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+    """按一下指定键码（down + up，间隔 0.05s，理由同 post_click）。"""
+    import time  # noqa: PLC0415
+
+    down = Quartz.CGEventCreateKeyboardEvent(None, keycode, True)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+    time.sleep(0.05)
+    up = Quartz.CGEventCreateKeyboardEvent(None, keycode, False)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
 
 
 def post_swipe(x1: float, y1: float, x2: float, y2: float, duration: float = 0.5) -> None:

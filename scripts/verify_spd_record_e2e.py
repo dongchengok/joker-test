@@ -35,10 +35,9 @@ OUTPUTS_DIR = REPO / "outputs" / f"verify_explore_{RUN_TS}"
 def reset_spd() -> None:
     """重启 SPD 回主菜单（确保从初始状态开始）。"""
     if sys.platform == "darwin":
-        subprocess.run(["pkill", "-f", "ShatteredPD"], capture_output=True)
+        subprocess.run(["pkill", "-f", "DesktopLauncher"], capture_output=True)
         time.sleep(2)
-        jar = str(REPO / ".test-targets" / "SPD-mac" / "ShatteredPD.jar")
-        subprocess.Popen(["java", "-jar", jar], cwd=os.path.dirname(jar))
+        subprocess.Popen(["bash", str(REPO / "scripts" / "start_spd_mac.sh")])
     else:
         import win32gui  # noqa: PLC0415, F401
 
