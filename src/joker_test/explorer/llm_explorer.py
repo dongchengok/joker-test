@@ -337,14 +337,13 @@ class LLMExplorer:
 
     @staticmethod
     def _is_window_decoration(x: float, y: float) -> bool:
-        """检查坐标是否在窗口装饰区域（标题栏/关闭按钮等）。"""
-        # 右上角关闭/最大化/最小化区域
-        if x > 0.9 and y < 0.1:
-            return True
-        # 左上角窗口标题栏
-        if y < 0.05:
-            return True
-        return False
+        """检查坐标是否在窗口装饰区域（右上角关闭按钮等）。
+
+        backend 截图已是内容区（MacBackend 裁掉标题栏 / airtest 客户区），
+        顶部条带是游戏 UI（如 SPD 的菜单按钮），不能大面积拦截；
+        只拦右上角极小区域（桌面游戏的退出按钮常见位置）。
+        """
+        return x > 0.95 and y < 0.04
 
     @staticmethod
     def _extract_target_from_desc(desc: str) -> str:

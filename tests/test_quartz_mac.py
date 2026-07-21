@@ -79,7 +79,7 @@ _WIN = {
 
 def test_find_window_found(quartz_mod):
     q = quartz_mod([_WIN])
-    assert q.find_window("Shattered") == (42, (100.0, 50.0, 800.0, 600.0), 777)
+    assert q.find_window("Shattered") == (42, (100.0, 50.0, 800.0, 600.0), 777, 0)
 
 
 def test_find_window_not_found(quartz_mod):
@@ -91,7 +91,7 @@ def test_find_window_nonzero_layer_fallback(quartz_mod):
     """全屏游戏窗口 layer≠0（实测 SPD 全屏 layer=25），兜底匹配任意 layer。"""
     win = dict(_WIN, kCGWindowLayer=25)
     q = quartz_mod([win])
-    assert q.find_window("Shattered") == (42, (100.0, 50.0, 800.0, 600.0), 777)
+    assert q.find_window("Shattered") == (42, (100.0, 50.0, 800.0, 600.0), 777, 25)
 
 
 def test_find_window_prefers_layer0(quartz_mod):

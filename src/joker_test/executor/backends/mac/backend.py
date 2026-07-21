@@ -36,6 +36,8 @@ class MacBackend:
         ocr: OCRProvider（None 时 _MacState 懒加载默认 RapidOCR）
     """
 
+    _TITLE_BAR_POINTS = 28.0  # macOS 标准标题栏高（point）
+
     def __init__(
         self,
         window_title: str,
@@ -48,6 +50,7 @@ class MacBackend:
         self._window_id: int | None = None
         self._bounds: tuple[float, float, float, float] | None = None  # point (x,y,w,h)
         self._pid: int | None = None  # 窗口所属进程（输入前置前用）
+        self._layer: int = 0  # 窗口 layer（0=窗口化有标题栏，≠0=全屏无标题栏）
         self._scale: float = 1.0  # 截图像素宽 / bounds point 宽（Retina=2.0）
         self._current_frame: NDArray | None = None  # type: ignore[valid-type]
         self._state: _MacState | None = None
@@ -67,7 +70,7 @@ class MacBackend:
                 "若游戏已在运行仍找不到，检查 系统设置→隐私与安全性→屏幕录制 "
                 "是否已授权当前终端（授权后需重启终端）。"
             )
-        self._window_id, self._bounds, pid = found
+        self._window_id, self._bounds, pid, self._layer = found
         self._pid = pid
         _quartz.activate_app(pid)
         time.sleep(0.5)  # 等窗口置前动画
@@ -91,15 +94,23 @@ class MacBackend:
     # ===== 感知 =====
 
     def screenshot(self) -> NDArray:  # type: ignore[valid-type]
-        """截取游戏窗口，返回 BGR ndarray。每次调用刷新 bounds 与 scale。"""
+        """截取游戏窗口内容区，返回 BGR ndarray。每次调用刷新 bounds 与 scale。
+
+        窗口化时裁掉顶部标题栏（28pt × scale），对齐 Windows 客户区截图语义——
+        LLM/OCR 坐标与游戏内容四角对齐，避免内容被标题栏挤压偏移。
+        """
         if self._window_id is None:
             raise RuntimeError("未 connect，先调用 connect()")
         found = _quartz.find_window(self._window_title)  # 窗口可能移动/缩放
         if found is not None:
-            self._window_id, self._bounds, self._pid = found
+            self._window_id, self._bounds, self._pid, self._layer = found
         frame = _quartz.capture_window(self._window_id)
         if self._bounds is not None and self._bounds[2] > 0:
             self._scale = frame.shape[1] / self._bounds[2]
+        if self._layer == 0:
+            tb_px = round(self._TITLE_BAR_POINTS * self._scale)
+            if 0 < tb_px < frame.shape[0]:
+                frame = frame[tb_px:, :, :]
         self._current_frame = frame
         if self._state is not None:
             self._state.invalidate()
@@ -107,12 +118,16 @@ class MacBackend:
 
     # ===== 操作（归一化坐标，基准=screenshot 图像尺寸）=====
 
+    def _content_top(self) -> float:
+        """内容区相对窗口 bounds 顶部的偏移（point）：窗口化=标题栏高，全屏=0。"""
+        return self._TITLE_BAR_POINTS if self._layer == 0 else 0.0
+
     def _to_screen_point(self, x: float, y: float) -> tuple[float, float]:
         """归一化坐标 → 全局 point 坐标（CGEvent 用）。"""
         if self._current_frame is None or self._bounds is None:
             raise RuntimeError("无当前帧/窗口信息，先 screenshot()")
         h, w = self._current_frame.shape[:2]
-        bx, by = self._bounds[0], self._bounds[1]
+        bx, by = self._bounds[0], self._bounds[1] + self._content_top()
         return bx + x * w / self._scale, by + y * h / self._scale
 
     def _before_input(self) -> None:

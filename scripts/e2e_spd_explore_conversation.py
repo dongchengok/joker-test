@@ -107,7 +107,7 @@ def main() -> int:
         backend=backend,
         llm=provider,
         strategy=strategy,
-        max_steps=20,
+        max_steps=30,
         recorder=recorder,
         screenshot_dir=flow_dir / "screenshots",
         plugin_manager=plugin_manager,
@@ -116,7 +116,7 @@ def main() -> int:
 
     print(f"\n探索意图: {intent}")
     print("策略: conversation（对齐 Open-AutoGLM）")
-    print("最大步数: 20")
+    print("最大步数: 30")
     print("-" * 60)
 
     try:
