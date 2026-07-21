@@ -20,7 +20,7 @@ _FRAME = np.random.default_rng(0).integers(20, 230, (600, 800, 3), dtype=np.uint
 
 @pytest.fixture
 def backend(monkeypatch):
-    monkeypatch.setattr(_quartz, "find_window", lambda t: (42, _BOUNDS, 777))
+    monkeypatch.setattr(_quartz, "find_window", lambda t: (42, _BOUNDS, 777, 0))
     monkeypatch.setattr(_quartz, "capture_window", lambda wid: _FRAME.copy())
     monkeypatch.setattr(_quartz, "activate_app", lambda pid: None)
     clicks: list[tuple] = []
@@ -44,11 +44,26 @@ def test_window_not_found(monkeypatch):
         MacBackend(window_title="Shattered").connect()
 
 
+def test_screenshot_crops_title_bar_when_windowed(backend):
+    """layer=0（窗口化）时裁掉标题栏 28pt×scale=56px，对齐客户区语义。"""
+    backend.connect()
+    frame = backend.screenshot()
+    assert frame.shape == (600 - 56, 800, 3)
+
+
+def test_screenshot_no_crop_when_fullscreen(monkeypatch, backend):
+    """layer≠0（全屏）时不裁剪。"""
+    monkeypatch.setattr(_quartz, "find_window", lambda t: (42, _BOUNDS, 777, 25))
+    backend.connect()
+    frame = backend.screenshot()
+    assert frame.shape == (600, 800, 3)
+
+
 def test_click_normalized_to_global_point(backend):
     backend.connect()
     backend.click(0.5, 0.5)
-    # 截图像素中心 (400, 300) → point (200, 150) → 全局 (100+200, 50+150)
-    assert backend._test_clicks == [(300.0, 200.0)]
+    # 裁剪后帧 544×800：x = 100 + 0.5×800/2 = 300；y = 50 + 28 + 0.5×544/2 = 214
+    assert backend._test_clicks == [(300.0, 214.0)]
 
 
 def test_click_out_of_range(backend):

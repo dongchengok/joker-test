@@ -27,8 +27,8 @@ except ImportError as e:
 if TYPE_CHECKING:
     from numpy import ndarray
 
-# (windowID, (x, y, w, h) point 坐标, ownerPID)
-WindowInfo = tuple[int, tuple[float, float, float, float], int]
+# (windowID, (x, y, w, h) point 坐标, ownerPID, layer)
+WindowInfo = tuple[int, tuple[float, float, float, float], int, int]
 
 
 def find_window(title_substr: str) -> WindowInfo | None:
@@ -43,7 +43,8 @@ def find_window(title_substr: str) -> WindowInfo | None:
         title_substr: 窗口标题子串（如 "Shattered"）
 
     Returns:
-        (windowID, (x, y, w, h), ownerPID)；找不到返回 None。
+        (windowID, (x, y, w, h), ownerPID, layer)；找不到返回 None。
+        layer 用于区分窗口化（0，有标题栏）与全屏（≠0，无标题栏）。
     """
     wins = Quartz.CGWindowListCopyWindowInfo(0, Quartz.kCGNullWindowID)
 
@@ -53,7 +54,12 @@ def find_window(title_substr: str) -> WindowInfo | None:
             return None
         b = w["kCGWindowBounds"]
         bounds = (float(b["X"]), float(b["Y"]), float(b["Width"]), float(b["Height"]))
-        return int(w["kCGWindowNumber"]), bounds, int(w.get("kCGWindowOwnerPID", 0))
+        return (
+            int(w["kCGWindowNumber"]),
+            bounds,
+            int(w.get("kCGWindowOwnerPID", 0)),
+            int(w.get("kCGWindowLayer", 0)),
+        )
 
     for w in wins:  # 第一遍：layer=0 普通窗口优先
         if w.get("kCGWindowLayer", -1) == 0:

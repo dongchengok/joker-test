@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _SCREEN_CHANGE_THRESHOLD = 0.005
 _WAIT_AFTER_ACTION = 1.0
+_MAX_RECOVERY_ATTEMPTS = 5  # 恢复钩子的总触发上限（防重启循环）
 
 
 class LLMExplorer:
@@ -40,6 +42,7 @@ class LLMExplorer:
         screenshot_dir: str | Path | None = None,
         recorder: GlobalRecorder | None = None,
         plugin_manager: Any = None,
+        recovery: Callable[[], None] | None = None,
     ) -> None:
         self._backend = backend
         self._llm = llm
@@ -47,6 +50,11 @@ class LLMExplorer:
         self._max_steps = max_steps
         self._recorder = recorder
         self._plugin_manager = plugin_manager
+        # recovery：backend 抛 RuntimeError（如游戏被误退出、窗口丢失）时的恢复钩子，
+        # 由调用方提供游戏特化的重启+重连逻辑；None 则异常直接上抛
+        self._recovery = recovery
+        self._recovery_attempts = 0
+        self._black_count = 0  # 连续黑屏计数（≥2 触发恢复）
         self._step = 0
         self._screenshot_dir = Path(screenshot_dir) if screenshot_dir else None
         if self._screenshot_dir:
@@ -74,11 +82,49 @@ class LLMExplorer:
         return self._strategy.get_state_map()
 
     def _run_step(self, ctx: ExploreContext) -> None:
+        """单步外层：backend RuntimeError（窗口丢失等）时走恢复钩子。"""
+        try:
+            self._run_step_once(ctx)
+        except RuntimeError as e:
+            if self._recovery is None or self._recovery_attempts >= _MAX_RECOVERY_ATTEMPTS:
+                raise
+            self._recovery_attempts += 1
+            _LOGGER.warning(
+                "backend 异常（第 %d 次恢复）: %s", self._recovery_attempts, e
+            )
+            self._trace("recovery", {"attempt": self._recovery_attempts, "error": str(e)})
+            self._recovery()
+
+    def _run_step_once(self, ctx: ExploreContext) -> None:
         """单步：截图→感知→决策→执行→录制。"""
         self._step = ctx.step
         screenshot = self._retry_screenshot()
         if screenshot is None:
             return
+
+        # 黑屏检测：游戏渲染挂掉（真机实测 SPD 切场后 GL 上下文变黑）时截图不抛
+        # 异常但内容全黑。连续 2 步黑屏且有恢复钩子 → 恢复（重启游戏）。
+        # 切场黑帧只有零点几秒，而步间隔是秒级，连续 2 步黑屏必是真故障。
+        from joker_test.executor.coords import analyze_screenshot  # noqa: PLC0415
+
+        health = analyze_screenshot(screenshot)
+        if "失败" in health:
+            self._black_count += 1
+            if (
+                self._recovery is not None
+                and self._black_count >= 2
+                and self._recovery_attempts < _MAX_RECOVERY_ATTEMPTS
+            ):
+                self._recovery_attempts += 1
+                self._black_count = 0
+                _LOGGER.warning("连续黑屏（第 %d 次恢复）: %s", self._recovery_attempts, health)
+                self._trace("recovery_black", {
+                    "attempt": self._recovery_attempts, "health": health,
+                })
+                self._recovery()
+                return
+        else:
+            self._black_count = 0
 
         # 截图落盘（trace 诊断必需：LLM 当时到底看到了什么界面）
         screenshot_path = self._save_screenshot(screenshot, ctx.step)
@@ -291,14 +337,13 @@ class LLMExplorer:
 
     @staticmethod
     def _is_window_decoration(x: float, y: float) -> bool:
-        """检查坐标是否在窗口装饰区域（标题栏/关闭按钮等）。"""
-        # 右上角关闭/最大化/最小化区域
-        if x > 0.9 and y < 0.1:
-            return True
-        # 左上角窗口标题栏
-        if y < 0.05:
-            return True
-        return False
+        """检查坐标是否在窗口装饰区域（右上角关闭按钮等）。
+
+        backend 截图已是内容区（MacBackend 裁掉标题栏 / airtest 客户区），
+        顶部条带是游戏 UI（如 SPD 的菜单按钮），不能大面积拦截；
+        只拦右上角极小区域（桌面游戏的退出按钮常见位置）。
+        """
+        return x > 0.95 and y < 0.04
 
     @staticmethod
     def _extract_target_from_desc(desc: str) -> str:
@@ -347,12 +392,16 @@ class LLMExplorer:
                 )
 
     def _retry_screenshot(self, max_retries: int = 3) -> Any:
-        """重试截图。"""
+        """重试截图。重试耗尽后重抛最后一次异常（触发外层恢复/上抛）。"""
+        last_error: Exception | None = None
         for _ in range(max_retries):
             try:
                 return self._backend.screenshot()
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
+                last_error = e
                 time.sleep(0.5)
+        if last_error is not None:
+            raise last_error
         return None
 
     def _save_screenshot(self, screenshot: Any, step: int) -> Path | None:

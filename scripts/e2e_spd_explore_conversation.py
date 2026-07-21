@@ -1,13 +1,15 @@
 """端到端测试：用 ConversationStrategy（对齐 Open-AutoGLM）探索 SPD 到设置音量界面。
 
-流程：启动 SPD → AirtestBackend 连接 → ConversationStrategy 探索
+流程：启动 SPD → 原生 backend 连接 → ConversationStrategy 探索
       （截图→perception→ReAct决策→执行→重复）→ 不固化 → 生成报告
+游戏被误退出（如主菜单 escape）时自动重启续跑（LLMExplorer recovery 钩子）。
 
 使用：python scripts/e2e_spd_explore_conversation.py
 """
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -18,6 +20,7 @@ sys.path.insert(0, str(REPO / "src"))
 from joker_test.config import load_config
 from joker_test.executor import set_active_backend
 from joker_test.executor.backends.factory import create_native_backend
+from joker_test.executor.window import wait_for_window
 from joker_test.explorer.conversation_strategy import ConversationStrategy
 from joker_test.explorer.llm_explorer import LLMExplorer
 from joker_test.flow.recorder import GlobalRecorder
@@ -58,9 +61,44 @@ def main() -> int:
     set_active_backend(backend)
     print("✓ SPD 已连接")
 
+    def restart_spd() -> None:
+        """游戏被误退出（如主菜单 escape 退出进程）时重启续跑（recovery 钩子）。
+
+        pkill 后等 5s 再启动：实测 pkill 后 2s 内重启 GLFW 显示器探测会偶发
+        NPE（glfwGetMonitorPos 空指针）崩掉。启动后校验截图健康，不健康再试一次。
+        """
+        from joker_test.executor.coords import analyze_screenshot
+
+        for attempt in range(2):
+            print(f"⚠ 游戏窗口丢失，重启 SPD 续跑（第 {attempt + 1} 次）...")
+            if sys.platform == "darwin":
+                subprocess.run(["pkill", "-f", "DesktopLauncher"], capture_output=True)
+                subprocess.run(["pkill", "-f", "run into an error"], capture_output=True)
+                time.sleep(5)
+                subprocess.Popen(["bash", str(REPO / "scripts" / "start_spd_mac.sh")])
+            else:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"],
+                    capture_output=True,
+                )
+                time.sleep(5)
+                exe = str(REPO / ".test-targets" / "SPD" / "Shattered Pixel Dungeon.exe")
+                subprocess.Popen([exe], cwd=str(Path(exe).parent))
+            if not wait_for_window("Shattered", timeout=30.0):
+                continue
+            time.sleep(5)  # 等标题界面加载
+            backend.connect()
+            health = analyze_screenshot(backend.screenshot())
+            if "失败" not in health and "异常" not in health:
+                print("✓ SPD 已重启并重连")
+                return
+            print(f"⚠ 重启后画面不健康（{health}），再试一次")
+        raise RuntimeError("SPD 重启失败（两次尝试后画面仍不健康）")
+
     intent = (
         "进入游戏设置界面，找到音频设置，将音乐音量从10降低到约5。"
         "注意：绝对不要点击全屏模式。SPD 的音量设置在音频设置里，不在显示设置里。"
+        "如果表层界面没有设置入口，就向游戏更深处探索（游戏内通常有菜单）。"
         "完成后输出 goal_completed=true。"
     )
     flow_dir = REPO / "flows" / f"e2e_conversation_{int(time.time())}"
@@ -83,15 +121,16 @@ def main() -> int:
         backend=backend,
         llm=provider,
         strategy=strategy,
-        max_steps=20,
+        max_steps=30,
         recorder=recorder,
         screenshot_dir=flow_dir / "screenshots",
         plugin_manager=plugin_manager,
+        recovery=restart_spd,
     )
 
     print(f"\n探索意图: {intent}")
     print("策略: conversation（对齐 Open-AutoGLM）")
-    print("最大步数: 20")
+    print("最大步数: 30")
     print("-" * 60)
 
     try:
