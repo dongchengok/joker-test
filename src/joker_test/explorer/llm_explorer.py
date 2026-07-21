@@ -54,6 +54,7 @@ class LLMExplorer:
         # 由调用方提供游戏特化的重启+重连逻辑；None 则异常直接上抛
         self._recovery = recovery
         self._recovery_attempts = 0
+        self._black_count = 0  # 连续黑屏计数（≥2 触发恢复）
         self._step = 0
         self._screenshot_dir = Path(screenshot_dir) if screenshot_dir else None
         if self._screenshot_dir:
@@ -100,6 +101,30 @@ class LLMExplorer:
         screenshot = self._retry_screenshot()
         if screenshot is None:
             return
+
+        # 黑屏检测：游戏渲染挂掉（真机实测 SPD 切场后 GL 上下文变黑）时截图不抛
+        # 异常但内容全黑。连续 2 步黑屏且有恢复钩子 → 恢复（重启游戏）。
+        # 切场黑帧只有零点几秒，而步间隔是秒级，连续 2 步黑屏必是真故障。
+        from joker_test.executor.coords import analyze_screenshot  # noqa: PLC0415
+
+        health = analyze_screenshot(screenshot)
+        if "失败" in health:
+            self._black_count += 1
+            if (
+                self._recovery is not None
+                and self._black_count >= 2
+                and self._recovery_attempts < _MAX_RECOVERY_ATTEMPTS
+            ):
+                self._recovery_attempts += 1
+                self._black_count = 0
+                _LOGGER.warning("连续黑屏（第 %d 次恢复）: %s", self._recovery_attempts, health)
+                self._trace("recovery_black", {
+                    "attempt": self._recovery_attempts, "health": health,
+                })
+                self._recovery()
+                return
+        else:
+            self._black_count = 0
 
         # 截图落盘（trace 诊断必需：LLM 当时到底看到了什么界面）
         screenshot_path = self._save_screenshot(screenshot, ctx.step)

@@ -138,3 +138,41 @@ def test_explorer_reraises_without_recovery() -> None:
     )
     with pytest.raises(RuntimeError, match="窗口丢失"):
         explorer.explore()
+
+
+class _BlackFrameBackend(FakeBackend):
+    """返回全黑帧（模拟游戏渲染挂掉），healed 后恢复正常帧。"""
+
+    def __init__(self, **kw) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(**kw)
+        self.healed = False
+
+    def screenshot(self):  # type: ignore[no-untyped-def]
+        if not self.healed:
+            import numpy as np  # noqa: PLC0415
+
+            return np.zeros((100, 100, 3), dtype=np.uint8)
+        return super().screenshot()
+
+
+def test_explorer_recovers_from_black_screen() -> None:
+    """连续 2 步黑屏触发恢复钩子（游戏渲染挂掉场景）。"""
+    backend = _BlackFrameBackend(screens={"root": ScreenCfg()}, initial_screen="root")
+    recovery_calls: list[int] = []
+
+    def recover() -> None:
+        recovery_calls.append(1)
+        backend.healed = True
+
+    strategy = _MockStrategy([
+        StepDecision(think="s1", action="press_key", target="escape"),
+        StepDecision(think="s2", action="press_key", target="escape"),
+        StepDecision(think="s3", action="press_key", target="escape"),
+        StepDecision(think="done", action="stop", stop=True),
+    ])
+    explorer = LLMExplorer(
+        backend=backend, llm=MagicMock(), strategy=strategy,
+        max_steps=10, recovery=recover,
+    )
+    explorer.explore()
+    assert recovery_calls == [1]
