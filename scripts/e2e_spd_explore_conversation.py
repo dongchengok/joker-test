@@ -1,7 +1,7 @@
-"""端到端测试：用 ConversationStrategy（对齐 Open-AutoGLM）探索 SPD 到设置音量界面。
+"""端到端测试：用 AgentStrategy（agent loop + 工具化感知/执行）探索 SPD 到设置音量界面。
 
-流程：启动 SPD → 原生 backend 连接 → ConversationStrategy 探索
-      （截图→perception→ReAct决策→执行→重复）→ 不固化 → 生成报告
+流程：启动 SPD → 原生 backend 连接 → AgentStrategy 探索
+      （agent loop：LLM 按需调 get_screenshot/get_ocr_text/click/... 工具）→ 不固化 → 生成报告
 游戏被误退出（如主菜单 escape）时自动重启续跑（LLMExplorer recovery 钩子）。
 
 使用：python scripts/e2e_spd_explore_conversation.py
@@ -21,7 +21,7 @@ from joker_test.config import load_config
 from joker_test.executor import set_active_backend
 from joker_test.executor.backends.factory import create_native_backend
 from joker_test.executor.window import wait_for_window
-from joker_test.explorer.conversation_strategy import ConversationStrategy
+from joker_test.explorer.agent_strategy import AgentStrategy
 from joker_test.explorer.llm_explorer import LLMExplorer
 from joker_test.flow.recorder import GlobalRecorder
 from joker_test.llm.providers.anthropic import AnthropicProvider, load_env
@@ -32,7 +32,7 @@ from joker_test.plugins.ocr import OCRPlugin
 
 def main() -> int:
     print("=" * 60)
-    print("SPD 端到端探索测试（ConversationStrategy / Open-AutoGLM 模式）")
+    print("SPD 端到端探索测试（AgentStrategy / agent loop 模式）")
     print("=" * 60)
 
     cfg = load_env()
@@ -99,9 +99,9 @@ def main() -> int:
         "进入游戏设置界面，找到音频设置，将音乐音量从10降低到约5。"
         "注意：绝对不要点击全屏模式。SPD 的音量设置在音频设置里，不在显示设置里。"
         "如果表层界面没有设置入口，就向游戏更深处探索（游戏内通常有菜单）。"
-        "完成后输出 goal_completed=true。"
+        "完成后调用 finish(goal_completed=true)。"
     )
-    flow_dir = REPO / "flows" / f"e2e_conversation_{int(time.time())}"
+    flow_dir = REPO / "flows" / f"e2e_agent_{int(time.time())}"
     flow_dir.mkdir(parents=True, exist_ok=True)
 
     recorder = GlobalRecorder(output_dir=flow_dir, backend=backend, pynput_mode=False)
@@ -110,7 +110,7 @@ def main() -> int:
     # OCRPlugin：提供 OCR 文字+坐标注入 + 语义变化校验（判断操作是否有效）
     plugin_manager = PluginManager([OCRPlugin()])
 
-    strategy = ConversationStrategy(
+    strategy = AgentStrategy(
         llm=provider,
         intent=intent,
         max_conversation_tokens=16000,
@@ -129,7 +129,7 @@ def main() -> int:
     )
 
     print(f"\n探索意图: {intent}")
-    print("策略: conversation（对齐 Open-AutoGLM）")
+    print("策略: agent（工具化感知/执行，agent loop）")
     print("最大步数: 30")
     print("-" * 60)
 
@@ -164,7 +164,7 @@ def main() -> int:
     # 生成报告
     report = {
         "intent": intent,
-        "strategy": "conversation",
+        "strategy": "agent",
         "screens_found": len(state_map.screens),
         "screen_names": [s.name or s.id for s in state_map.screens],
         "flow_steps": len(flow.steps),
