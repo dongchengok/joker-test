@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _SCREEN_CHANGE_THRESHOLD = 0.005
 _WAIT_AFTER_ACTION = 1.0
-_MAX_RECOVERY_ATTEMPTS = 3  # 恢复钩子的总触发上限（防重启循环）
+_MAX_RECOVERY_ATTEMPTS = 5  # 恢复钩子的总触发上限（防重启循环）
 
 
 class LLMExplorer:

@@ -98,6 +98,7 @@ def main() -> int:
     intent = (
         "进入游戏设置界面，找到音频设置，将音乐音量从10降低到约5。"
         "注意：绝对不要点击全屏模式。SPD 的音量设置在音频设置里，不在显示设置里。"
+        "如果表层界面没有设置入口，就向游戏更深处探索（游戏内通常有菜单）。"
         "完成后输出 goal_completed=true。"
     )
     flow_dir = REPO / "flows" / f"e2e_conversation_{int(time.time())}"
