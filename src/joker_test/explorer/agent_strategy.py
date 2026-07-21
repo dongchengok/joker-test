@@ -60,6 +60,7 @@ class AgentStrategy:
         self._step_results: list[dict[str, Any]] = []
         self._finish_info: dict[str, Any] | None = None  # 本步 finish 调用记录
         self._last_step_summary: str = ""  # 上一步执行摘要，注入下一步 user 消息
+        self._id_counter: int = 0  # tool_use id 重写计数器（见 decide 注释）
 
     def decide(
         self,
@@ -107,6 +108,12 @@ class AgentStrategy:
                 for b in reply.get("content", [])
                 if isinstance(b, dict) and b.get("type") != "thinking"
             ]
+            # 重写 tool_use id 保证全历史唯一：kimi 端点按 name:N 生成 id，
+            # 多轮后重复会 400（"tool call id xxx is duplicated"）卡死后续所有调用
+            for b in assistant_blocks:
+                if b.get("type") == "tool_use":
+                    self._id_counter += 1
+                    b["id"] = f"call_{self._id_counter}"
             self._messages.append({"role": "assistant", "content": assistant_blocks})
 
             tool_uses = [b for b in assistant_blocks if b.get("type") == "tool_use"]

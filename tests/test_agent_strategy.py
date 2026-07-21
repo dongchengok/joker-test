@@ -124,7 +124,43 @@ def test_single_round_multiple_tool_calls_merge_one_user_message() -> None:
     ]
     assert len(merged) == 1
     ids = {b["tool_use_id"] for b in merged[0]["content"]}
-    assert ids == {"toolu_0", "toolu_1"}
+    assert ids == {"call_1", "call_2"}  # tool_use id 被重写为全历史唯一
+
+
+def test_tool_use_ids_rewritten_unique() -> None:
+    """LLM 回复的 tool_use id 重复时（kimi 端点 name:N 计数会撞 id），
+    历史中的 id 必须被重写为唯一，且 tool_result 引用重写后的 id。"""
+    backend = _make_backend()
+    dup_reply = {
+        "content": [
+            {"type": "tool_use", "id": "get_ocr_text:1", "name": "get_ocr_text", "input": {}},
+        ]
+    }
+    llm = _ScriptedLLM([
+        dup_reply,
+        dict(dup_reply),  # 第二轮同样的 id
+        _tool_reply(("finish", {"goal_completed": True, "summary": "完成"})),
+    ])
+    strategy = AgentStrategy(llm=llm, intent="进入设置界面")
+
+    _decide(strategy, backend, llm)
+
+    assistant_ids = [
+        b["id"]
+        for msg in strategy._messages
+        if msg["role"] == "assistant"
+        for b in msg["content"]
+        if b.get("type") == "tool_use"
+    ]
+    assert len(assistant_ids) == len(set(assistant_ids)), "assistant tool_use id 必须唯一"
+    result_ids = [
+        b["tool_use_id"]
+        for msg in strategy._messages
+        if msg["role"] == "user"
+        for b in msg["content"]
+        if b.get("type") == "tool_result"
+    ]
+    assert set(result_ids) <= set(assistant_ids), "tool_result 必须引用重写后的 id"
 
 
 def test_no_tool_use_breaks_loop_and_continues() -> None:
