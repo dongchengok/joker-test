@@ -109,11 +109,15 @@ class AgentStrategy:
                 if isinstance(b, dict) and b.get("type") != "thinking"
             ]
             # 重写 tool_use id 保证全历史唯一：kimi 端点按 name:N 生成 id，
-            # 多轮后重复会 400（"tool call id xxx is duplicated"）卡死后续所有调用
+            # 多轮后重复会 400（"tool call id xxx is duplicated"）卡死后续所有调用。
+            # 用新 dict 而非原地改，避免污染 provider 的回复对象。
+            rewritten_blocks: list[dict[str, Any]] = []
             for b in assistant_blocks:
                 if b.get("type") == "tool_use":
                     self._id_counter += 1
-                    b["id"] = f"call_{self._id_counter}"
+                    b = {**b, "id": f"call_{self._id_counter}"}
+                rewritten_blocks.append(b)
+            assistant_blocks = rewritten_blocks
             self._messages.append({"role": "assistant", "content": assistant_blocks})
 
             tool_uses = [b for b in assistant_blocks if b.get("type") == "tool_use"]
