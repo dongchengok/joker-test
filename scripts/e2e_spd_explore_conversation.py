@@ -1,13 +1,15 @@
 """端到端测试：用 ConversationStrategy（对齐 Open-AutoGLM）探索 SPD 到设置音量界面。
 
-流程：启动 SPD → AirtestBackend 连接 → ConversationStrategy 探索
+流程：启动 SPD → 原生 backend 连接 → ConversationStrategy 探索
       （截图→perception→ReAct决策→执行→重复）→ 不固化 → 生成报告
+游戏被误退出（如主菜单 escape）时自动重启续跑（LLMExplorer recovery 钩子）。
 
 使用：python scripts/e2e_spd_explore_conversation.py
 """
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -18,6 +20,7 @@ sys.path.insert(0, str(REPO / "src"))
 from joker_test.config import load_config
 from joker_test.executor import set_active_backend
 from joker_test.executor.backends.factory import create_native_backend
+from joker_test.executor.window import wait_for_window
 from joker_test.explorer.conversation_strategy import ConversationStrategy
 from joker_test.explorer.llm_explorer import LLMExplorer
 from joker_test.flow.recorder import GlobalRecorder
@@ -58,6 +61,27 @@ def main() -> int:
     set_active_backend(backend)
     print("✓ SPD 已连接")
 
+    def restart_spd() -> None:
+        """游戏被误退出（如主菜单 escape 退出进程）时重启续跑（recovery 钩子）。"""
+        print("⚠ 游戏窗口丢失，重启 SPD 续跑...")
+        if sys.platform == "darwin":
+            subprocess.run(["pkill", "-f", "DesktopLauncher"], capture_output=True)
+            time.sleep(2)
+            subprocess.Popen(["bash", str(REPO / "scripts" / "start_spd_mac.sh")])
+        else:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"],
+                capture_output=True,
+            )
+            time.sleep(2)
+            exe = str(REPO / ".test-targets" / "SPD" / "Shattered Pixel Dungeon.exe")
+            subprocess.Popen([exe], cwd=str(Path(exe).parent))
+        if not wait_for_window("Shattered", timeout=30.0):
+            raise RuntimeError("SPD 重启失败（窗口未出现）")
+        time.sleep(5)  # 等标题界面加载
+        backend.connect()
+        print("✓ SPD 已重启并重连")
+
     intent = (
         "进入游戏设置界面，找到音频设置，将音乐音量从10降低到约5。"
         "注意：绝对不要点击全屏模式。SPD 的音量设置在音频设置里，不在显示设置里。"
@@ -87,6 +111,7 @@ def main() -> int:
         recorder=recorder,
         screenshot_dir=flow_dir / "screenshots",
         plugin_manager=plugin_manager,
+        recovery=restart_spd,
     )
 
     print(f"\n探索意图: {intent}")
