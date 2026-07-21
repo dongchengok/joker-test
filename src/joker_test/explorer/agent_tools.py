@@ -254,8 +254,10 @@ class AgentToolExecutor:
                     )
         h, w = shot.shape[:2]
         long_side = max(h, w)
-        if long_side > 1024:
-            scale = 1024 / long_side
+        # 长边上限 1536：再小会把 ~80px 的游戏图标压到模型无法定位的尺寸；
+        # 再大则 token 成本陡增且模型视觉管线仍会二次压缩
+        if long_side > 1536:
+            scale = 1536 / long_side
             shot = cv2.resize(shot, (round(w * scale), round(h * scale)))
         shot = _draw_grid(shot)
         sh, sw = shot.shape[:2]
