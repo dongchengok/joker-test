@@ -32,6 +32,7 @@ def rec(monkeypatch):
     mod.kCGHIDEventTap = 0
     mod.kCGEventLeftMouseDown = 1
     mod.kCGEventLeftMouseUp = 2
+    mod.kCGEventMouseMoved = 5
     mod.kCGEventLeftMouseDragged = 6
     mod.kCGMouseButtonLeft = 0
 
@@ -60,13 +61,14 @@ def rec(monkeypatch):
         vars(mac_pkg).pop("_quartz", None)
 
 
-def test_post_click_down_up_at_point(rec):
+def test_post_click_move_then_down_up(rec):
+    """click 必须先投 mouseMoved 再 down/up（GLFW 靠移动事件更新光标位置）。"""
     r, q = rec
     q.post_click(640.0, 360.0)
     types_seq = [e[1] for e in r.mouse_events]
-    assert types_seq == [1, 2]  # down, up
+    assert types_seq == [5, 1, 2]  # move, down, up
     assert r.mouse_events[0][2] == (640.0, 360.0)
-    assert len(r.posted) == 2
+    assert len(r.posted) == 3
 
 
 def test_post_key_down_up(rec):
@@ -76,21 +78,21 @@ def test_post_key_down_up(rec):
     assert len(r.posted) == 2
 
 
-def test_post_swipe_down_drag_up(rec):
+def test_post_swipe_move_then_down_drag_up(rec):
     r, q = rec
     q.post_swipe(0.0, 0.0, 100.0, 0.0, duration=0.01)
     types_seq = [e[1] for e in r.mouse_events]
-    assert types_seq[0] == 1 and types_seq[-1] == 2  # down ... up
+    assert types_seq[0] == 5 and types_seq[1] == 1 and types_seq[-1] == 2  # move, down ... up
     assert 6 in types_seq  # 中间有 dragged
     assert r.mouse_events[-1][2] == (100.0, 0.0)
 
 
-def test_post_long_press_down_up_same_point(rec):
+def test_post_long_press_move_then_down_up(rec):
     r, q = rec
     q.post_long_press(50.0, 60.0, duration=0.01)
     types_seq = [e[1] for e in r.mouse_events]
-    assert types_seq == [1, 2]
-    assert r.mouse_events[0][2] == r.mouse_events[1][2] == (50.0, 60.0)
+    assert types_seq == [5, 1, 2]
+    assert r.mouse_events[0][2] == r.mouse_events[-1][2] == (50.0, 60.0)
 
 
 def test_keycodes_common_keys(rec):
