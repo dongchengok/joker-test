@@ -62,25 +62,38 @@ def main() -> int:
     print("✓ SPD 已连接")
 
     def restart_spd() -> None:
-        """游戏被误退出（如主菜单 escape 退出进程）时重启续跑（recovery 钩子）。"""
-        print("⚠ 游戏窗口丢失，重启 SPD 续跑...")
-        if sys.platform == "darwin":
-            subprocess.run(["pkill", "-f", "DesktopLauncher"], capture_output=True)
-            time.sleep(2)
-            subprocess.Popen(["bash", str(REPO / "scripts" / "start_spd_mac.sh")])
-        else:
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"],
-                capture_output=True,
-            )
-            time.sleep(2)
-            exe = str(REPO / ".test-targets" / "SPD" / "Shattered Pixel Dungeon.exe")
-            subprocess.Popen([exe], cwd=str(Path(exe).parent))
-        if not wait_for_window("Shattered", timeout=30.0):
-            raise RuntimeError("SPD 重启失败（窗口未出现）")
-        time.sleep(5)  # 等标题界面加载
-        backend.connect()
-        print("✓ SPD 已重启并重连")
+        """游戏被误退出（如主菜单 escape 退出进程）时重启续跑（recovery 钩子）。
+
+        pkill 后等 5s 再启动：实测 pkill 后 2s 内重启 GLFW 显示器探测会偶发
+        NPE（glfwGetMonitorPos 空指针）崩掉。启动后校验截图健康，不健康再试一次。
+        """
+        from joker_test.executor.coords import analyze_screenshot
+
+        for attempt in range(2):
+            print(f"⚠ 游戏窗口丢失，重启 SPD 续跑（第 {attempt + 1} 次）...")
+            if sys.platform == "darwin":
+                subprocess.run(["pkill", "-f", "DesktopLauncher"], capture_output=True)
+                subprocess.run(["pkill", "-f", "run into an error"], capture_output=True)
+                time.sleep(5)
+                subprocess.Popen(["bash", str(REPO / "scripts" / "start_spd_mac.sh")])
+            else:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"],
+                    capture_output=True,
+                )
+                time.sleep(5)
+                exe = str(REPO / ".test-targets" / "SPD" / "Shattered Pixel Dungeon.exe")
+                subprocess.Popen([exe], cwd=str(Path(exe).parent))
+            if not wait_for_window("Shattered", timeout=30.0):
+                continue
+            time.sleep(5)  # 等标题界面加载
+            backend.connect()
+            health = analyze_screenshot(backend.screenshot())
+            if "失败" not in health and "异常" not in health:
+                print("✓ SPD 已重启并重连")
+                return
+            print(f"⚠ 重启后画面不健康（{health}），再试一次")
+        raise RuntimeError("SPD 重启失败（两次尝试后画面仍不健康）")
 
     intent = (
         "进入游戏设置界面，找到音频设置，将音乐音量从10降低到约5。"

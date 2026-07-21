@@ -14,6 +14,10 @@ APP_DIR="$REPO/.test-targets/SPD-mac/Shattered Pixel Dungeon.app/Contents/app"
 SETTINGS="$HOME/Library/Application Support/Shattered Pixel Dungeon/settings.xml"
 JDK_BIN="$(echo "$REPO"/.test-targets/jdk/*/Contents/Home/bin)"
 
+# 清理残留崩溃弹窗（SPD 崩溃时 tinyfd 弹的 osascript 对话框，标题也含 Shattered，
+# 不清理会被窗口查找误匹配）
+pkill -f "run into an error" 2>/dev/null || true
+
 # 强制窗口模式（全屏窗口独占 Space，自动化无法点击）
 mkdir -p "$(dirname "$SETTINGS")"
 if [ -f "$SETTINGS" ]; then
