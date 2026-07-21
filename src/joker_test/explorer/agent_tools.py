@@ -36,8 +36,20 @@ _MAX_OCR_AFTER = 10
 AGENT_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "get_screenshot",
-        "description": "获取当前界面截图（返回图片）。需要看界面布局、图标位置时调用。",
-        "input_schema": {"type": "object", "properties": {}},
+        "description": (
+            "获取界面截图（返回图片）。可选 region 参数只截取归一化矩形区域 "
+            "(x,y,w,h)，用于放大查看小图标/局部区域；不传则返回全屏。"
+            "注意：无论是否裁剪，后续操作的坐标始终是相对全屏的归一化坐标。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "number", "description": "区域左上角归一化 x（可选）"},
+                "y": {"type": "number", "description": "区域左上角归一化 y（可选）"},
+                "w": {"type": "number", "description": "区域归一化宽（可选）"},
+                "h": {"type": "number", "description": "区域归一化高（可选）"},
+            },
+        },
     },
     {
         "name": "get_ocr_text",
@@ -163,7 +175,10 @@ class AgentToolExecutor:
         """
         try:
             if name == "get_screenshot":
-                return {"tool_result_content": self._screenshot_blocks(), "executed_action": None}
+                return {
+                    "tool_result_content": self._screenshot_blocks(inp),
+                    "executed_action": None,
+                }
             if name == "get_ocr_text":
                 text = json.dumps(self._ocr_items(), ensure_ascii=False)
                 return {
@@ -180,8 +195,11 @@ class AgentToolExecutor:
 
     # ===== 感知工具 =====
 
-    def _screenshot_blocks(self) -> list[dict[str, Any]]:
+    def _screenshot_blocks(self, inp: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """当前截图 → text 简述 + image 块（base64 png，长边压到 1024 内）。
+
+        可选归一化 region (x,y,w,h) 裁剪局部区域（放大查看小图标用）；
+        坐标说明里注明裁剪区域，提醒后续操作坐标仍相对全屏。
 
         Retina 原图（2880+ px）会被模型视觉管线二次压缩，坐标定位变差且费 token；
         主动压到 ≤1024 反而提升定位精度（坐标归一化，与分辨率无关）。
@@ -189,6 +207,22 @@ class AgentToolExecutor:
         import cv2  # noqa: PLC0415
 
         shot = self._backend.screenshot()
+        region_desc = ""
+        if inp:
+            rx, ry = inp.get("x"), inp.get("y")
+            rw, rh = inp.get("w"), inp.get("h")
+            if None not in (rx, ry, rw, rh):
+                fh, fw = shot.shape[:2]
+                x1 = max(int(float(rx) * fw), 0)
+                y1 = max(int(float(ry) * fh), 0)
+                x2 = min(x1 + int(float(rw) * fw), fw)
+                y2 = min(y1 + int(float(rh) * fh), fh)
+                if x2 > x1 and y2 > y1:
+                    shot = shot[y1:y2, x1:x2]
+                    region_desc = (
+                        f"（已裁剪到区域 x={rx},y={ry},w={rw},h={rh}；"
+                        "后续操作坐标仍相对全屏归一化）"
+                    )
         h, w = shot.shape[:2]
         long_side = max(h, w)
         if long_side > 1024:
@@ -198,7 +232,10 @@ class AgentToolExecutor:
         _, buf = cv2.imencode(".png", shot)
         b64 = base64.b64encode(buf.tobytes()).decode("ascii")
         return [
-            {"type": "text", "text": f"当前界面截图（{sw}x{sh} 像素，坐标请用归一化 [0,1]）"},
+            {
+                "type": "text",
+                "text": f"当前界面截图（{sw}x{sh} 像素{region_desc}，坐标请用归一化 [0,1]）",
+            },
             {
                 "type": "image",
                 "source": {"type": "base64", "media_type": "image/png", "data": b64},

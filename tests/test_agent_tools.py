@@ -112,6 +112,28 @@ def test_get_screenshot_returns_text_and_image_blocks() -> None:
     assert len(blocks[1]["source"]["data"]) > 0
 
 
+def test_get_screenshot_region_crop() -> None:
+    """get_screenshot 带 region 参数时裁剪对应区域（图像尺寸与区域一致）。"""
+    import base64
+
+    backend = _make_backend()
+    frame = backend.screenshot()
+    fh, fw = frame.shape[:2]
+    ex = AgentToolExecutor(backend)
+    out = ex.execute("get_screenshot", {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.25})
+    blocks = out["tool_result_content"]
+    assert "已裁剪到区域" in blocks[0]["text"]
+    import cv2
+    import numpy as np
+
+    img = cv2.imdecode(
+        np.frombuffer(base64.b64decode(blocks[1]["source"]["data"]), dtype=np.uint8),
+        cv2.IMREAD_COLOR,
+    )
+    assert img.shape[0] == round(fh * 0.25)
+    assert img.shape[1] == round(fw * 0.5)
+
+
 def test_unknown_tool_returns_error_not_raise() -> None:
     """未知工具名不抛异常，返回 success=False + error。"""
     backend = _make_backend()

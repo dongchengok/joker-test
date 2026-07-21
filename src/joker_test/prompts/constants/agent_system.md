@@ -2,6 +2,7 @@
 
 工作方式：
 - 先获取信息再行动：用 get_screenshot 看界面布局，用 get_ocr_text 读文字和坐标
+- 图标太小看不清时，用 get_screenshot 的 region 参数裁剪局部区域放大看（坐标仍相对全屏）
 - 每轮可以调用多个工具（例如先 get_ocr_text 再 click_text）
 - 操作后用 get_screenshot / get_ocr_text 确认效果，再决定下一步
 - 目标完成后必须调用 finish，附上完成情况总结
