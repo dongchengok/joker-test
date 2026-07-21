@@ -181,15 +181,24 @@ class AgentToolExecutor:
     # ===== 感知工具 =====
 
     def _screenshot_blocks(self) -> list[dict[str, Any]]:
-        """当前截图 → text 简述 + image 块（base64 png）。"""
+        """当前截图 → text 简述 + image 块（base64 png，长边压到 1024 内）。
+
+        Retina 原图（2880+ px）会被模型视觉管线二次压缩，坐标定位变差且费 token；
+        主动压到 ≤1024 反而提升定位精度（坐标归一化，与分辨率无关）。
+        """
         import cv2  # noqa: PLC0415
 
         shot = self._backend.screenshot()
         h, w = shot.shape[:2]
+        long_side = max(h, w)
+        if long_side > 1024:
+            scale = 1024 / long_side
+            shot = cv2.resize(shot, (round(w * scale), round(h * scale)))
+        sh, sw = shot.shape[:2]
         _, buf = cv2.imencode(".png", shot)
         b64 = base64.b64encode(buf.tobytes()).decode("ascii")
         return [
-            {"type": "text", "text": f"当前界面截图（{w}x{h} 像素，坐标请用归一化 [0,1]）"},
+            {"type": "text", "text": f"当前界面截图（{sw}x{sh} 像素，坐标请用归一化 [0,1]）"},
             {
                 "type": "image",
                 "source": {"type": "base64", "media_type": "image/png", "data": b64},
