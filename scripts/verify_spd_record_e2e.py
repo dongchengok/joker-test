@@ -39,8 +39,6 @@ def reset_spd() -> None:
         time.sleep(2)
         subprocess.Popen(["bash", str(REPO / "scripts" / "start_spd_mac.sh")])
     else:
-        import win32gui  # noqa: PLC0415, F401
-
         subprocess.run(
             ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"], capture_output=True
         )

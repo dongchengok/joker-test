@@ -38,9 +38,9 @@ game_meta_path = REPO / "examples" / "e2e_launch_quit" / "game_metadata.json"
 game_meta = json.loads(game_meta_path.read_text(encoding="utf-8"))
 print(f"游戏: {game_meta['game_name']}")
 
-# Step 2: 真 SPD 探索（AirtestBackend + RapidOCR）
+# Step 2: 真 SPD 探索（原生 Backend + RapidOCR）
 print("\n" + "=" * 60)
-print("Step 2: 真 SPD 界面探索（AirtestBackend + RapidOCR）")
+print("Step 2: 真 SPD 界面探索（原生 Backend + RapidOCR）")
 print("=" * 60)
 from joker_test.executor.backends.factory import create_native_backend  # noqa: E402
 from joker_test.explorer import UIExplorer  # noqa: E402

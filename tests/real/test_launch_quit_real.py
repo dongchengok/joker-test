@@ -18,7 +18,7 @@ from joker_test.executor.base import ExecutorBackend
 
 # 真机模式（airtest/mac/native）才运行；CI（fake）自动跳过
 pytestmark = pytest.mark.skipif(
-    os.environ.get("JOKER_BACKEND", "fake") not in ("airtest", "mac", "native"),
+    os.environ.get("JOKER_BACKEND", "fake").lower() not in ("airtest", "mac", "native"),
     reason="真游戏测试，需 JOKER_BACKEND=airtest|mac|native",
 )
 

@@ -48,14 +48,24 @@ def _bgra_image(w: int, h: int) -> dict:
 
 @pytest.fixture
 def quartz_mod(monkeypatch):
-    """注入假 Quartz 并 reload _quartz，返回设置函数。"""
+    """注入假 Quartz 并 reload _quartz，返回设置函数。
+
+    teardown：从 sys.modules 移除已 reload 的 _quartz，
+    避免其模块全局永久指向假 Quartz 污染同进程后续真机调用。
+    """
     def _setup(windows: list[dict], image: dict | None = None):
         fake = _make_fake_quartz(windows, image)
         monkeypatch.setitem(sys.modules, "Quartz", fake)
         from joker_test.executor.backends.mac import _quartz
         importlib.reload(_quartz)
         return _quartz
-    return _setup
+    yield _setup
+    # 同时清掉父包上的 _quartz 属性，否则下次 from mac import _quartz
+    # 会命中残留属性（不再触发 import），导致 reload 报 "module not in sys.modules"
+    sys.modules.pop("joker_test.executor.backends.mac._quartz", None)
+    mac_pkg = sys.modules.get("joker_test.executor.backends.mac")
+    if mac_pkg is not None:
+        vars(mac_pkg).pop("_quartz", None)
 
 
 _WIN = {

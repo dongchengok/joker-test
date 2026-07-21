@@ -22,6 +22,11 @@ class _Recorder:
 
 @pytest.fixture
 def rec(monkeypatch):
+    """注入假 Quartz 记录事件构造参数，返回 (recorder, _quartz)。
+
+    teardown：从 sys.modules 移除已 reload 的 _quartz，
+    避免其模块全局永久指向假 Quartz 污染同进程后续真机调用。
+    """
     r = _Recorder()
     mod = types.ModuleType("Quartz")
     mod.kCGHIDEventTap = 0
@@ -46,7 +51,13 @@ def rec(monkeypatch):
     monkeypatch.setitem(sys.modules, "Quartz", mod)
     from joker_test.executor.backends.mac import _quartz
     importlib.reload(_quartz)
-    return r, _quartz
+    yield r, _quartz
+    # 同时清掉父包上的 _quartz 属性，否则下次 from mac import _quartz
+    # 会命中残留属性（不再触发 import），导致 reload 报 "module not in sys.modules"
+    sys.modules.pop("joker_test.executor.backends.mac._quartz", None)
+    mac_pkg = sys.modules.get("joker_test.executor.backends.mac")
+    if mac_pkg is not None:
+        vars(mac_pkg).pop("_quartz", None)
 
 
 def test_post_click_down_up_at_point(rec):

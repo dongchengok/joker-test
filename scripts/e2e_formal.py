@@ -41,7 +41,7 @@ mimo = AnthropicProvider(max_tokens=4096)
 ocr = RapidOCRProvider()
 backend = create_native_backend(window_title="Shattered", ocr=ocr)
 backend.connect()
-print("✓ AirtestBackend 已连接 SPD")
+print("✓ 已连接 SPD")
 
 # 探索主菜单——用直接截图+OCR 构造 UIMap（不走 UIExplorer 的 DFS，
 # 因为 DFS 的 backtrack 会 press_key("escape")，SPD 主菜单 escape 可能关游戏）
@@ -62,7 +62,7 @@ uimap = UIMap(
     )],
     root_screen_id="root",
     explored_at="2026-07-07",
-    backend_info={"type": "AirtestBackend+RapidOCR"},
+    backend_info={"type": f"{type(backend).__name__}+RapidOCR"},
 )
 print(f"✓ OCR 探索：{len(uimap.screens)} 界面, {len(elements)} 元素")
 print(f"  OCR 文本: {[e.text[:30] for e in elements[:6]]}")
@@ -110,7 +110,7 @@ for t in tests:
             print(f"    {line.strip()}")
 
 # Step 3: pytest 真执行
-print("\n[3/4] pytest 真执行（JOKER_BACKEND=airtest，真 SPD）...")
+print("\n[3/4] pytest 真执行（JOKER_BACKEND=native，真 SPD）...")
 from joker_test.runner import run_tests  # noqa: E402
 
 # 执行生成的测试 + 手写真测试

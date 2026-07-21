@@ -65,8 +65,8 @@ gen_dir = REPO / "tests" / "generated_smoke"
 gen_paths = write_tests_to_dir(tests, str(gen_dir))
 print(f"✓ 生成 {len(tests)} 份 testcase")
 
-# Step 4: 真执行（关键：JOKER_BACKEND=airtest 让 pytest 连真 SPD）
-print("\n[3/5] 真游戏执行（JOKER_BACKEND=airtest，pytest 连真 SPD）...")
+# Step 4: 真执行（关键：JOKER_BACKEND=native 让 pytest 连真 SPD）
+print("\n[3/5] 真游戏执行（JOKER_BACKEND=native，pytest 连真 SPD）...")
 print("  注意：测试在真游戏上跑，可能因 G7 截图/OCR 延迟有不确定性")
 from joker_test.runner import run_tests  # noqa: E402
 

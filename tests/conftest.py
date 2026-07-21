@@ -109,8 +109,11 @@ def backend() -> Iterator[ExecutorBackend]:
         backend.close()
     elif backend_type == "native":
         # 按当前平台自动选 AirtestBackend(Win)/MacBackend(Mac)
-        from joker_test.executor.backends.factory import create_native_backend
-        from joker_test.ocr.providers.rapidocr import RapidOCRProvider
+        try:
+            from joker_test.executor.backends.factory import create_native_backend
+            from joker_test.ocr.providers.rapidocr import RapidOCRProvider
+        except ImportError:
+            pytest.skip("原生 backend 依赖未装（Win: pip install -e .[airtest,ocr]；Mac: pip install -e .[mac,ocr]）")
 
         backend = create_native_backend(window_title=window_title, ocr=RapidOCRProvider())
         backend.connect()
