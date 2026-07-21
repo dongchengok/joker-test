@@ -34,26 +34,20 @@ OUTPUTS_DIR = REPO / "outputs" / f"verify_explore_{RUN_TS}"
 
 def reset_spd() -> None:
     """重启 SPD 回主菜单（确保从初始状态开始）。"""
-    import win32gui  # noqa: PLC0415
+    if sys.platform == "darwin":
+        subprocess.run(["pkill", "-f", "DesktopLauncher"], capture_output=True)
+        time.sleep(2)
+        subprocess.Popen(["bash", str(REPO / "scripts" / "start_spd_mac.sh")])
+    else:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"], capture_output=True
+        )
+        time.sleep(2)
+        exe = str(REPO / ".test-targets" / "SPD" / "Shattered Pixel Dungeon.exe")
+        subprocess.Popen([exe], cwd=os.path.dirname(exe))
+    from joker_test.executor.window import wait_for_window  # noqa: PLC0415
 
-    subprocess.run(
-        ["taskkill", "/F", "/IM", "Shattered Pixel Dungeon.exe"], capture_output=True
-    )
-    time.sleep(2)
-    exe = str(REPO / ".test-targets" / "SPD" / "Shattered Pixel Dungeon.exe")
-    subprocess.Popen([exe], cwd=os.path.dirname(exe))
-    for _ in range(20):
-        found = [False]
-
-        def _check(h, _):  # noqa: ANN001
-            if win32gui.IsWindowVisible(h) and WINDOW_TITLE in win32gui.GetWindowText(h):
-                found[0] = True  # noqa: B023
-            return True
-
-        win32gui.EnumWindows(_check, None)
-        if found[0]:
-            break
-        time.sleep(1)
+    wait_for_window(WINDOW_TITLE, timeout=20.0)
     time.sleep(5)  # 等 LibGDX 标题画面过渡到主菜单
 
 
@@ -81,12 +75,13 @@ print("✓ SPD 就绪")
 
 # === 1. LLMExplorer 探索 + 自动录制 ===
 print("\n[1] LLMExplorer 探索 SPD（LLM 自主决策，自动录制操作流）...")
-from joker_test.executor.backends.airtest import AirtestBackend  # noqa: E402
+from joker_test.executor.backends.factory import create_native_backend  # noqa: E402
 from joker_test.explorer.llm_explorer import LLMExplorer  # noqa: E402
 from joker_test.flow import GlobalRecorder  # noqa: E402
 from joker_test.ocr.providers.rapidocr import RapidOCRProvider  # noqa: E402
 
-backend = AirtestBackend(window_title=WINDOW_TITLE, ocr=RapidOCRProvider())
+backend = create_native_backend(window_title=WINDOW_TITLE, ocr=RapidOCRProvider())
+backend.connect()
 recorder = GlobalRecorder(
     output_dir=OUTPUTS_DIR / "flow", backend=backend, pynput_mode=False
 )
@@ -209,7 +204,7 @@ for p in test_paths:
 print(f"\n{'=' * 70}")
 print("[4] 试跑验证 + 回喂重写（TestCaseVerifier）")
 print(f"{'=' * 70}")
-os.environ["JOKER_BACKEND"] = "airtest"
+os.environ["JOKER_BACKEND"] = "native"
 os.environ["JOKER_WINDOW"] = WINDOW_TITLE
 
 from joker_test.flow import TestCaseVerifier  # noqa: E402
@@ -218,7 +213,7 @@ verifier = TestCaseVerifier(
     reset_fn=reset_spd,
     gen_dir=gen_dir,
     max_retries=2,
-    backend_name="airtest",
+    backend_name="native",
     game_name="Shattered Pixel Dungeon",
 )
 tests, history = verifier.verify_and_fix(tests, gen, flow, final_dir, game_meta)
@@ -252,7 +247,7 @@ from joker_test.runner import run_tests  # noqa: E402
 
 session = run_tests(
     test_paths=[str(p) for p in final_test_paths],
-    backend_name="airtest",
+    backend_name="native",
     game_name="Shattered Pixel Dungeon",
 )
 

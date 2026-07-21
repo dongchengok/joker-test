@@ -44,7 +44,12 @@ python -m joker_test.charter_gen \
     --ids 1 --personas 破坏狂 贪婪者 --verbose
 
 # 启动过渡被测游戏
-.test-targets/SPD/"Shattered Pixel Dungeon.exe"
+.test-targets/SPD/"Shattered Pixel Dungeon.exe"      # Windows
+bash scripts/start_spd_mac.sh                        # macOS（窗口模式启动，详见 §7 陷阱 10）
+
+# macOS 真机测试（需先启动 SPD + 授权终端"屏幕录制"+"辅助功能"）
+JOKER_BACKEND=mac pytest tests/real/                 # 真机用例（Win 用 JOKER_BACKEND=airtest）
+python scripts/e2e_spd_explore_conversation.py       # LLM 探索端到端（自动按平台选 backend）
 ```
 
 入口点：`joker-test = joker_test.cli:main`（pyproject `[project.scripts]`）。
@@ -72,7 +77,7 @@ src/joker_test/
   flow/                        # 操作录制+生成（pynput 监听→LLM 起名→语义化→test_case→试跑验证）
   llm/                         # LLM 抽象（base.py Protocol 对齐 anthropic SDK）
     providers/                 # anthropic/（读 .env 的 MIMO_API_KEY/MIMO_BASE_URL，兼容 MiMo/GLM 端点）+ mock/
-  executor/                    # Backend 抽象（base.py Protocol + coords.py + 全局注册 set/get_active_backend）
+  executor/                    # Backend 抽象（base.py Protocol + coords.py + window.py + 全局注册 set/get_active_backend + backends/ fake·airtest·mac·factory）
     backends/                  # airtest/（默认，图像识别为核心）+ fake/（CI 用）
   ocr/                         # OCR 抽象（base.py Protocol + providers/rapidocr/）
   perception/                  # 感知层（backend 无关）：OCR→match→LLM 三层漏斗
@@ -143,6 +148,7 @@ DESIGN.md                      # 架构权威文档（含 14 条 ADR + 工程规
 7. **全局 backend 注册**：`set_active_backend()` 在程序入口调用一次（CLI/conftest/pipeline）。测试间注意重置。
 8. **真机边界**：AirtestBackend 走 Win32 `PrintWindow`，窗口被完全遮挡/最小化时截图白屏/黑屏（G7）。
 9. **pytest 不收集 `Test*` 类**（`python_classes=[]`）：测试一律写成 `test_*` 函数。
+10. **macOS 真机（MacBackend）**：① 终端 App 需授权"屏幕录制"（截图）+"辅助功能"（CGEvent 输入），改完必须 ⌘Q 完全退出终端再重开；可用 `AXIsProcessTrusted()` 验证。② SPD 必须用 `scripts/start_spd_mac.sh` 启动：官方 .app 的 x86_64 launcher 会加载错误 natives 直接崩（glfwGetMonitorPos NPE），脚本用本地 arm64 JDK + 只保留 macos-arm64 natives；且 SPD 默认全屏会独占 Space 导致截图/点击投递不到，脚本会写 `fullscreen=false` 强制窗口模式。③ `post_click` 的 down/up 必须有间隔（libGDX 按帧轮询输入，瞬时点击会被丢）。④ 点击前要把游戏 App 置前（`activate_app` 对 java CLI 进程不可靠时可用 AppleScript System Events frontmost）。
 
 ## 8. 测试策略
 

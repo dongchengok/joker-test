@@ -17,37 +17,31 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-os.environ["JOKER_BACKEND"] = "airtest"
+os.environ.setdefault("JOKER_BACKEND", "native")
 
 # Step 0: 确认 SPD
 print("=" * 60)
 print("正式端到端：LLM 生成 → pytest 真执行 → 报告")
 print("=" * 60)
-import win32gui  # noqa: E402
+from joker_test.executor.window import wait_for_window  # noqa: E402
 
-_found = [False]
-def _chk(h, _):  # noqa: ANN001
-    if win32gui.IsWindowVisible(h) and "Shattered" in win32gui.GetWindowText(h):
-        _found[0] = True
-    return True
-win32gui.EnumWindows(_chk, None)
-if not _found[0]:
+if not wait_for_window("Shattered", timeout=10.0):
     print("✗ SPD 未启动！")
     sys.exit(1)
 print("✓ SPD 运行中")
 
 # Step 1: 多层识别探索
 print("\n[1/4] 多层识别探索真 SPD（OCR + LLM 识图）...")
-from joker_test.executor.backends.airtest import AirtestBackend  # noqa: E402
+from joker_test.executor.backends.factory import create_native_backend  # noqa: E402
 from joker_test.llm.providers.anthropic import AnthropicProvider
 from joker_test.ocr.providers.rapidocr import RapidOCRProvider  # noqa: E402
 from joker_test.perception import PerceptionEngine  # noqa: E402
 
 mimo = AnthropicProvider(max_tokens=4096)
 ocr = RapidOCRProvider()
-backend = AirtestBackend(window_title="Shattered", ocr=ocr)
+backend = create_native_backend(window_title="Shattered", ocr=ocr)
 backend.connect()
-print("✓ AirtestBackend 已连接 SPD")
+print("✓ 已连接 SPD")
 
 # 探索主菜单——用直接截图+OCR 构造 UIMap（不走 UIExplorer 的 DFS，
 # 因为 DFS 的 backtrack 会 press_key("escape")，SPD 主菜单 escape 可能关游戏）
@@ -68,7 +62,7 @@ uimap = UIMap(
     )],
     root_screen_id="root",
     explored_at="2026-07-07",
-    backend_info={"type": "AirtestBackend+RapidOCR"},
+    backend_info={"type": f"{type(backend).__name__}+RapidOCR"},
 )
 print(f"✓ OCR 探索：{len(uimap.screens)} 界面, {len(elements)} 元素")
 print(f"  OCR 文本: {[e.text[:30] for e in elements[:6]]}")
@@ -116,12 +110,12 @@ for t in tests:
             print(f"    {line.strip()}")
 
 # Step 3: pytest 真执行
-print("\n[3/4] pytest 真执行（JOKER_BACKEND=airtest，真 SPD）...")
+print("\n[3/4] pytest 真执行（JOKER_BACKEND=native，真 SPD）...")
 from joker_test.runner import run_tests  # noqa: E402
 
 # 执行生成的测试 + 手写真测试
 test_paths = [str(p) for p in gen_paths] + ["tests/real/"]
-session = run_tests(test_paths, backend_name="airtest", game_name="SPD-正式端到端")
+session = run_tests(test_paths, backend_name="native", game_name="SPD-正式端到端")
 print(f"✓ 执行完成：通过 {session.passed}，失败 {session.failed}，共 {len(session.results)}")
 for r in session.results:
     icon = "✓" if r.status == "passed" else "✗"

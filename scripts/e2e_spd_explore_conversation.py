@@ -17,7 +17,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from joker_test.config import load_config
 from joker_test.executor import set_active_backend
-from joker_test.executor.backends.airtest import AirtestBackend
+from joker_test.executor.backends.factory import create_native_backend
 from joker_test.explorer.conversation_strategy import ConversationStrategy
 from joker_test.explorer.llm_explorer import LLMExplorer
 from joker_test.flow.recorder import GlobalRecorder
@@ -53,7 +53,7 @@ def main() -> int:
 
     window_title = "Shattered Pixel Dungeon"
     print(f"连接 SPD: {window_title} ...")
-    backend = AirtestBackend(window_title=window_title, ocr=ocr)
+    backend = create_native_backend(window_title=window_title, ocr=ocr)
     backend.connect()
     set_active_backend(backend)
     print("✓ SPD 已连接")

@@ -71,6 +71,16 @@ git clone https://github.com/yusf1013/SpecOps.git SpecOps-src
 pip install -r SpecOps-src/requirements.txt
 ```
 
+### macOS 真机测试（可选）
+
+```bash
+pip install -e ".[mac,ocr]"          # MacBackend（pyobjc Quartz）+ OCR
+# 下载官方 SPD macOS 版解压到 .test-targets/SPD-mac/，arm64 JDK 放 .test-targets/jdk/
+bash scripts/start_spd_mac.sh        # 窗口模式启动游戏（脚本处理 natives/全屏坑）
+# 终端 App 需授权"屏幕录制"+"辅助功能"（改完 ⌘Q 完全退出终端再重开）
+JOKER_BACKEND=mac pytest tests/real/
+```
+
 ### 配置 AWS 凭据
 
 ```bash
