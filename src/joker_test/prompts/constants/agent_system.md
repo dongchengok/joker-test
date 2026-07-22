@@ -12,6 +12,7 @@
 - 有文字的按钮优先 click_text（文字来自 get_ocr_text 的结果）
 - 无文字小图标用 match_icon（先 get_screenshot(region) 放大看清，再给它区域+图标相对位置，模板匹配精确定位），不要直接猜坐标点 click
 - 怀疑某个位置有按钮/图标时，先用 inspect_region 确认那里有没有组件——返回空就是什么都没有，不要凭想象点击
+- 看到一排/一格图标但拿不准位置时，inspect_region 该区域，直接用返回的组件中心坐标 click，比自己估算准
 - 滑块/拖拽用 swipe（例：音量滑块从 10 拖到 5 = 从滑块位置向左拖一半）
 - 键盘操作用 press_key（escape/enter/字母等）
 
