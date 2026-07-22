@@ -22,12 +22,13 @@ def _parse_result(out: dict) -> dict:
     return json.loads(blocks[0]["text"])
 
 
-def test_schemas_cover_ten_tools() -> None:
-    """10 个工具 schema 齐全且为 Anthropic 格式。"""
+def test_schemas_cover_eleven_tools() -> None:
+    """11 个工具 schema 齐全且为 Anthropic 格式。"""
     names = {t["name"] for t in AGENT_TOOL_SCHEMAS}
     assert names == {
         "get_screenshot", "get_ocr_text", "click", "click_text",
         "press_key", "swipe", "long_press", "back", "finish", "match_icon",
+        "inspect_region",
     }
     for t in AGENT_TOOL_SCHEMAS:
         assert "description" in t and "input_schema" in t
@@ -225,6 +226,32 @@ def test_snap_to_feature_snaps_to_blob() -> None:
     backend.screenshot = lambda: frame2.copy()  # type: ignore[method-assign]
     ex.execute("click", {"x": 0.5, "y": 0.5})
     assert backend.click_history[1] == ("click", (0.5, 0.5))
+
+
+def test_inspect_region_reports_blob() -> None:
+    """inspect_region：有组件的区域返回组件坐标；空区域返回证伪 note。"""
+    import numpy as np
+
+    frame = np.zeros((200, 400, 3), dtype=np.uint8)
+    frame[50:90, 100:140] = 255  # 白块中心 (0.3, 0.35)
+
+    backend = _make_backend()
+    backend.screenshot = lambda: frame.copy()  # type: ignore[method-assign]
+    ex = AgentToolExecutor(backend)
+
+    out = ex.execute("inspect_region", {"x": 0.2, "y": 0.2, "w": 0.3, "h": 0.3})
+    assert out["executed_action"] is None
+    report = json.loads(out["tool_result_content"][0]["text"])
+    assert len(report["components"]) == 1
+    assert abs(report["components"][0]["x"] - 0.3) < 0.03
+    assert abs(report["components"][0]["y"] - 0.35) < 0.03
+
+    empty = json.loads(
+        ex.execute("inspect_region", {"x": 0.7, "y": 0.7, "w": 0.2, "h": 0.2})
+        ["tool_result_content"][0]["text"]
+    )
+    assert empty["components"] == []
+    assert "未检测到" in empty["note"]
 
 
 def test_unknown_tool_returns_error_not_raise() -> None:

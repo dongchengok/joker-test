@@ -153,6 +153,24 @@ AGENT_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "inspect_region",
+        "description": (
+            "检测指定区域内有什么（证伪工具）：返回区域内检测到的可疑组件"
+            "（图标/按钮量级）的中心坐标列表 + OCR 文字。怀疑某处有按钮时先"
+            "用它确认——返回空列表就是那里什么都没有，不要凭想象点击。"
+            "不传区域参数则检测全屏。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "number", "description": "区域左上角归一化 x（可选）"},
+                "y": {"type": "number", "description": "区域左上角归一化 y（可选）"},
+                "w": {"type": "number", "description": "区域归一化宽（可选）"},
+                "h": {"type": "number", "description": "区域归一化高（可选）"},
+            },
+        },
+    },
+    {
         "name": "finish",
         "description": "结束探索。目标完成（goal_completed=true）或确认无法继续时调用。",
         "input_schema": {
@@ -207,6 +225,33 @@ def _draw_grid(
     return img
 
 
+def _find_blobs(
+    frame: Any,
+    min_area_frac: float = 0.001,
+    max_area_frac: float = 0.05,
+) -> list[tuple[float, float, float]]:
+    """全帧轮廓检测，返回图标量级组件列表 [(中心x, 中心y, 面积px)]（归一化坐标）。
+
+    Canny 边缘 → 外轮廓 → 面积过滤。inspect_region / click 吸附共用。
+    """
+    import cv2  # noqa: PLC0415
+
+    fh, fw = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    blobs: list[tuple[float, float, float]] = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < min_area_frac * fw * fh or area > max_area_frac * fw * fh:
+            continue
+        m = cv2.moments(c)
+        if m["m00"] == 0:
+            continue
+        blobs.append((m["m10"] / m["m00"] / fw, m["m01"] / m["m00"] / fh, area))
+    return blobs
+
+
 class AgentToolExecutor:
     """按工具名分发执行到 backend。
 
@@ -239,6 +284,12 @@ class AgentToolExecutor:
                 }
             if name == "get_ocr_text":
                 text = json.dumps(self._ocr_items(), ensure_ascii=False)
+                return {
+                    "tool_result_content": [{"type": "text", "text": text}],
+                    "executed_action": None,
+                }
+            if name == "inspect_region":
+                text = json.dumps(self._inspect_region(inp), ensure_ascii=False)
                 return {
                     "tool_result_content": [{"type": "text", "text": text}],
                     "executed_action": None,
@@ -325,6 +376,46 @@ class AgentToolExecutor:
             else:
                 items.append({"text": text, "x": None, "y": None})
         return items
+
+    def _inspect_region(self, inp: dict[str, Any]) -> dict[str, Any]:
+        """inspect_region 实现：区域内 CV 组件检测 + OCR 文字汇总（证伪工具）。
+
+        Returns:
+            {"components": [{x,y,area}], "texts": [...], "note": str}。
+            components 为空即"该区域没有可疑组件"（幻觉按钮的证伪证据）。
+        """
+        frame = self._backend.screenshot()
+        fh, fw = frame.shape[:2]
+        rx, ry = inp.get("x"), inp.get("y")
+        rw, rh = inp.get("w"), inp.get("h")
+        if None in (rx, ry, rw, rh):
+            x1, y1, x2, y2 = 0, 0, fw, fh
+        else:
+            x1 = max(int(float(rx) * fw), 0)
+            y1 = max(int(float(ry) * fh), 0)
+            x2 = min(x1 + int(float(rw) * fw), fw)
+            y2 = min(y1 + int(float(rh) * fh), fh)
+        blobs = _find_blobs(frame)
+        # 组件中心落在区域内的才算；坐标转全屏归一化
+        components = [
+            {"x": round(cx, 3), "y": round(cy, 3), "area": round(area / (fw * fh), 4)}
+            for cx, cy, area in blobs
+            if x1 <= cx * fw <= x2 and y1 <= cy * fh <= y2
+        ]
+        components.sort(key=lambda c: -c["area"])
+        texts = [
+            item["text"]
+            for item in self._ocr_items()
+            if item["x"] is not None
+            and x1 <= item["x"] * fw <= x2
+            and y1 <= item["y"] * fh <= y2
+        ]
+        note = (
+            f"区域内检测到 {len(components)} 个可疑组件、{len(texts)} 段文字"
+            if components or texts
+            else "该区域未检测到可疑组件或文字（不要凭想象点击这里）"
+        )
+        return {"components": components[:10], "texts": texts[:10], "note": note}
 
     # ===== 动作工具 =====
 
@@ -523,28 +614,18 @@ class AgentToolExecutor:
         Returns:
             吸附后的归一化坐标（无候选时为原坐标）。
         """
-        import cv2  # noqa: PLC0415
 
         fh, fw = frame.shape[:2]
         px, py = x * fw, y * fh
         r = radius * max(fw, fh)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 50, 150)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         best: tuple[float, float] | None = None
         best_d = r
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area < 0.001 * fw * fh or area > 0.05 * fw * fh:
-                continue
-            m = cv2.moments(c)
-            if m["m00"] == 0:
-                continue
-            cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
+        for cx_f, cy_f, _area in _find_blobs(frame):
+            cx, cy = cx_f * fw, cy_f * fh
             d = ((cx - px) ** 2 + (cy - py) ** 2) ** 0.5
             if d < best_d:
                 best_d = d
-                best = (cx / fw, cy / fh)
+                best = (cx_f, cy_f)
         return best if best is not None else (x, y)
 
     def _record(self, name: str, inp: dict[str, Any]) -> None:
