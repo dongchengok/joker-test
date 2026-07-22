@@ -22,12 +22,12 @@ def _parse_result(out: dict) -> dict:
     return json.loads(blocks[0]["text"])
 
 
-def test_schemas_cover_nine_tools() -> None:
-    """9 个工具 schema 齐全且为 Anthropic 格式。"""
+def test_schemas_cover_ten_tools() -> None:
+    """10 个工具 schema 齐全且为 Anthropic 格式。"""
     names = {t["name"] for t in AGENT_TOOL_SCHEMAS}
     assert names == {
         "get_screenshot", "get_ocr_text", "click", "click_text",
-        "press_key", "swipe", "long_press", "back", "finish",
+        "press_key", "swipe", "long_press", "back", "finish", "match_icon",
     }
     for t in AGENT_TOOL_SCHEMAS:
         assert "description" in t and "input_schema" in t
@@ -132,6 +132,49 @@ def test_get_screenshot_region_crop() -> None:
     )
     assert img.shape[0] == round(fh * 0.25)
     assert img.shape[1] == round(fw * 0.5)
+
+
+def test_match_icon_locates_and_clicks_true_position() -> None:
+    """match_icon：给偏一点的区域内相对位置，模板匹配纠正到图标真实位置点击。"""
+    import numpy as np
+
+    # 200x400 黑帧，20x20 白块在 (col 100-120, row 50-70)，真实中心 (0.275, 0.3)
+    frame = np.zeros((200, 400, 3), dtype=np.uint8)
+    frame[50:70, 100:120] = 255
+
+    backend = _make_backend()
+    backend.screenshot = lambda: frame.copy()  # type: ignore[method-assign]
+    ex = AgentToolExecutor(backend)
+
+    # 区域 (0.2,0.15,0.3x0.4) 覆盖白块；相对位置故意偏一点 (0.35,0.45)
+    out = ex.execute("match_icon", {
+        "x": 0.2, "y": 0.15, "w": 0.3, "h": 0.4, "px": 0.35, "py": 0.45,
+    })
+    result = _parse_result(out)
+    assert result["success"] is True, result
+    assert result["match_score"] > 0.9
+    assert abs(result["matched_x"] - 0.275) < 0.05
+    assert abs(result["matched_y"] - 0.3) < 0.05
+    assert len(backend.click_history) == 1
+    _, (cx, cy) = backend.click_history[0]
+    assert abs(cx - 0.275) < 0.05 and abs(cy - 0.3) < 0.05
+
+
+def test_match_icon_low_score_no_click() -> None:
+    """区域内无图标（匹配不到）→ 不点击并报错。"""
+    import numpy as np
+
+    frame = np.zeros((200, 400, 3), dtype=np.uint8)
+    backend = _make_backend()
+    backend.screenshot = lambda: frame.copy()  # type: ignore[method-assign]
+    ex = AgentToolExecutor(backend)
+
+    result = _parse_result(ex.execute("match_icon", {
+        "x": 0.2, "y": 0.15, "w": 0.3, "h": 0.4, "px": 0.5, "py": 0.5,
+    }))
+    assert result["success"] is False
+    assert "无特征" in result["error"]
+    assert backend.click_history == []
 
 
 def test_unknown_tool_returns_error_not_raise() -> None:

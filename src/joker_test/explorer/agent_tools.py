@@ -124,6 +124,27 @@ AGENT_TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "match_icon",
+        "description": (
+            "模板匹配定位图标并点击（无文字小图标的首选，比估算坐标点 click 准得多）。"
+            "用法：先用 get_screenshot(region) 放大看清图标，然后给出区域 (x,y,w,h)"
+            "（全屏归一化）和图标在区域内的相对位置 (px,py)。工具以 (px,py) 为中心"
+            "裁小块在全屏做模板匹配，用匹配峰值的精确坐标点击。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "number", "description": "区域左上角归一化 x"},
+                "y": {"type": "number", "description": "区域左上角归一化 y"},
+                "w": {"type": "number", "description": "区域归一化宽"},
+                "h": {"type": "number", "description": "区域归一化高"},
+                "px": {"type": "number", "description": "图标在区域内的相对横坐标 [0,1]"},
+                "py": {"type": "number", "description": "图标在区域内的相对纵坐标 [0,1]"},
+            },
+            "required": ["x", "y", "w", "h", "px", "py"],
+        },
+    },
+    {
         "name": "back",
         "description": (
             "返回上级界面（按 escape）。警告：桌面游戏在标题/选角等前置界面按 escape "
@@ -146,7 +167,7 @@ AGENT_TOOL_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 # 动作类工具（执行前后截图算 diff + 录制）；感知类与 finish 不在此列
-_ACTION_TOOLS = {"click", "click_text", "press_key", "swipe", "long_press", "back"}
+_ACTION_TOOLS = {"click", "click_text", "press_key", "swipe", "long_press", "back", "match_icon"}
 
 
 def _draw_grid(img: Any) -> Any:
@@ -223,15 +244,14 @@ class AgentToolExecutor:
     # ===== 感知工具 =====
 
     def _screenshot_blocks(self, inp: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """当前截图 → text 简述 + image 块（base64 png，长边压到 1024 内）。
+        """当前截图 → text 简述 + image 块（base64 png，长边压到 1536 内）。
 
         可选归一化 region (x,y,w,h) 裁剪局部区域（放大查看小图标用）；
         坐标说明里注明裁剪区域，提醒后续操作坐标仍相对全屏。
-        图像叠加 0.1 间隔归一化坐标网格——提升 LLM 视觉定位精度（实测模型对
-        小图标位置估计偏差可达 0.3，网格标注后显著改善）。
+        图像叠加 0.1 间隔归一化坐标网格，辅助 LLM 视觉定位。
 
-        Retina 原图（2880+ px）会被模型视觉管线二次压缩，坐标定位变差且费 token；
-        主动压到 ≤1024 反而提升定位精度（坐标归一化，与分辨率无关）。
+        分辨率取舍：过大（Retina 2880+）会被模型视觉管线二次压缩且费 token；
+        过小（≤1024 实测）会把游戏小图标压到模型无法定位的尺寸。
         """
         import cv2  # noqa: PLC0415
 
@@ -301,6 +321,7 @@ class AgentToolExecutor:
             raise ValueError(f"未知工具: {name}")
 
         before = self._backend.screenshot()
+        self._extra: dict[str, Any] = {}
         success = True
         error: str | None = None
         try:
@@ -320,7 +341,8 @@ class AgentToolExecutor:
 
         ocr_after = self._texts_after()
         result_text = self._result_json(
-            success, changed=changed, ratio=ratio, error=error, ocr_after=ocr_after,
+            success, changed=changed, ratio=ratio, error=error,
+            ocr_after=ocr_after, extra=self._extra,
         )
         return {
             "tool_result_content": [{"type": "text", "text": result_text}],
@@ -367,6 +389,58 @@ class AgentToolExecutor:
             self._backend.long_press(x, y, duration=float(inp.get("duration", 2.0)))
         elif name == "back":
             self._backend.press_key("escape")
+        elif name == "match_icon":
+            return self._match_icon(inp, before)
+        return None
+
+    def _match_icon(self, inp: dict[str, Any], frame: Any) -> str | None:
+        """模板匹配定位图标并点击（match_icon 工具实现）。
+
+        流程：裁剪区域 (x,y,w,h) → 以区域内相对位置 (px,py) 为中心取小块当真值
+        模板 → 全屏 matchTemplate → 峰值坐标点击。置信度 <0.6 不点击并报错。
+        匹配信息存 self._extra 供结果 JSON 和录制用。
+        """
+        import cv2  # noqa: PLC0415
+
+        try:
+            x, y = float(inp["x"]), float(inp["y"])
+            w, h = float(inp["w"]), float(inp["h"])
+            px, py = float(inp["px"]), float(inp["py"])
+        except (KeyError, TypeError, ValueError):
+            return "match_icon 缺少参数 x/y/w/h/px/py"
+
+        fh, fw = frame.shape[:2]
+        x1, y1 = max(int(x * fw), 0), max(int(y * fh), 0)
+        x2, y2 = min(x1 + int(w * fw), fw), min(y1 + int(h * fh), fh)
+        if x2 - x1 < 10 or y2 - y1 < 10:
+            return "match_icon 区域太小（<10px）"
+        crop = frame[y1:y2, x1:x2]
+        ch, cw = crop.shape[:2]
+
+        # 以 (px,py) 为中心取小块当模板：边长 = 区域短边一半（钳制 20-200px）
+        side = max(min(int(0.5 * min(cw, ch)), 200), 20)
+        half = side // 2
+        cx, cy = int(px * cw), int(py * ch)
+        px1, py1 = max(cx - half, 0), max(cy - half, 0)
+        px2, py2 = min(cx + half, cw), min(cy + half, ch)
+        patch = crop[py1:py2, px1:px2]
+        if patch.size == 0:
+            return "match_icon 模板块为空"
+        if float(patch.std()) < 5.0:
+            return "match_icon 模板块无特征（纯色区域），请对准图标再试"
+
+        res = cv2.matchTemplate(frame, patch, cv2.TM_CCOEFF_NORMED)
+        _, score, _, loc = cv2.minMaxLoc(res)
+        ph, pw = patch.shape[:2]
+        gx, gy = (loc[0] + pw / 2) / fw, (loc[1] + ph / 2) / fh
+        self._extra = {
+            "match_score": round(float(score), 3),
+            "matched_x": round(gx, 3),
+            "matched_y": round(gy, 3),
+        }
+        if score < 0.6:
+            return f"匹配置信度过低({score:.2f})，未点击"
+        self._backend.click(gx, gy)
         return None
 
     def _record(self, name: str, inp: dict[str, Any]) -> None:
@@ -387,6 +461,13 @@ class AgentToolExecutor:
                 y = inp.get("y", inp.get("y1"))
                 if x is not None and y is not None:
                     self._recorder.record_action("click", x=x, y=y, note=name)
+            elif name == "match_icon":
+                self._recorder.record_action(
+                    "click",
+                    x=self._extra.get("matched_x"),
+                    y=self._extra.get("matched_y"),
+                    note="match_icon",
+                )
         except Exception:  # noqa: BLE001
             _LOGGER.warning("录制失败 %s", name, exc_info=True)
 
@@ -415,6 +496,7 @@ class AgentToolExecutor:
         ratio: float = 0.0,
         error: str | None = None,
         ocr_after: list[str] | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> str:
         """动作结果 JSON 文本（tool_result 给 LLM 的事实反馈）。"""
         return json.dumps(
@@ -424,6 +506,7 @@ class AgentToolExecutor:
                 "pixel_diff_ratio": round(ratio, 4),
                 "error": error,
                 "ocr_after": ocr_after or [],
+                **(extra or {}),
             },
             ensure_ascii=False,
         )
