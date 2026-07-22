@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from joker_test.executor.backends.fake import FakeBackend
+from joker_test.executor.backends.fake import FakeBackend, ScreenCfg
 from joker_test.executor.base import BBox
 from joker_test.explorer.agent_tools import AGENT_TOOL_SCHEMAS, AgentToolExecutor
 
@@ -16,9 +16,9 @@ def _make_backend() -> FakeBackend:
 
 
 def _parse_result(out: dict) -> dict:
-    """从 execute 返回里解析动作结果 JSON 文本。"""
+    """从 execute 返回里解析动作结果 JSON 文本（第一个 text block）。"""
     blocks = out["tool_result_content"]
-    assert len(blocks) == 1 and blocks[0]["type"] == "text"
+    assert blocks and blocks[0]["type"] == "text"
     return json.loads(blocks[0]["text"])
 
 
@@ -175,6 +175,56 @@ def test_match_icon_low_score_no_click() -> None:
     assert result["success"] is False
     assert "无特征" in result["error"]
     assert backend.click_history == []
+
+
+def test_click_missed_gets_marker_image() -> None:
+    """click 未产生界面变化时，结果附红叉标记截图块（闭环修正反馈）。"""
+    backend = _make_backend()
+    ex = AgentToolExecutor(backend)
+    out = ex.execute("click", {"x": 0.5, "y": 0.5})
+    blocks = out["tool_result_content"]
+    types = [b["type"] for b in blocks]
+    assert types == ["text", "text", "image"]
+    assert "实际点击位置" in blocks[1]["text"]
+    assert blocks[2]["source"]["media_type"] == "image/png"
+
+
+def test_click_changed_no_marker_image() -> None:
+    """click 产生界面变化时不附标记图（命中无需修正）。"""
+    backend = FakeBackend(
+        screens={
+            "root": ScreenCfg(texts_map={"设置": BBox(0.4, 0.4, 0.2, 0.1)}, bg_pixel=(50, 50, 50)),
+            "settings": ScreenCfg(bg_pixel=(200, 0, 0)),
+        },
+        transitions={("root", "设置"): "settings"},
+        initial_screen="root",
+    )
+    backend.connect()
+    ex = AgentToolExecutor(backend)
+    out = ex.execute("click_text", {"text": "设置"})
+    types = [b["type"] for b in out["tool_result_content"]]
+    assert types == ["text"]
+
+
+def test_snap_to_feature_snaps_to_blob() -> None:
+    """click 附近有显著块时吸附到其中心；无特征时保持原坐标。"""
+    import numpy as np
+
+    frame = np.zeros((200, 400, 3), dtype=np.uint8)
+    frame[50:90, 100:140] = 255  # 40x40 白块，中心 (0.3, 0.35)
+
+    backend = _make_backend()
+    backend.screenshot = lambda: frame.copy()  # type: ignore[method-assign]
+    ex = AgentToolExecutor(backend)
+
+    ex.execute("click", {"x": 0.35, "y": 0.4})  # 偏离块中心但在半径内
+    _, (cx, cy) = backend.click_history[0]
+    assert abs(cx - 0.3) < 0.03 and abs(cy - 0.35) < 0.03
+
+    frame2 = np.zeros((200, 400, 3), dtype=np.uint8)
+    backend.screenshot = lambda: frame2.copy()  # type: ignore[method-assign]
+    ex.execute("click", {"x": 0.5, "y": 0.5})
+    assert backend.click_history[1] == ("click", (0.5, 0.5))
 
 
 def test_unknown_tool_returns_error_not_raise() -> None:

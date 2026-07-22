@@ -170,13 +170,22 @@ AGENT_TOOL_SCHEMAS: list[dict[str, Any]] = [
 _ACTION_TOOLS = {"click", "click_text", "press_key", "swipe", "long_press", "back", "match_icon"}
 
 
-def _draw_grid(img: Any) -> Any:
+def _draw_grid(
+    img: Any,
+    origin_x: float = 0.0,
+    origin_y: float = 0.0,
+    span_x: float = 1.0,
+    span_y: float = 1.0,
+) -> Any:
     """在截图上叠加 0.1 间隔归一化坐标网格（提升 LLM 视觉定位精度）。
 
-    浅色细线 + 边缘坐标标注（0.1-0.9），线宽/透明度按图尺寸自适应。
+    浅色细线 + 边缘坐标标注。标注值 = origin + frac × span（全屏归一化坐标），
+    region 裁剪图传对应的 origin/span，保证标注始终是全屏坐标而非图内相对值。
 
     Args:
         img: BGR ndarray 截图
+        origin_x/origin_y: 图像左上角对应的全屏归一化坐标
+        span_x/span_y: 图像宽高对应的全屏归一化跨度
 
     Returns:
         叠加网格后的图像（原地修改并返回同一对象）。
@@ -191,9 +200,10 @@ def _draw_grid(img: Any) -> Any:
         y = round(frac * h)
         cv2.line(img, (x, 0), (x, h), color, 1)
         cv2.line(img, (0, y), (w, y), color, 1)
-        label = f"{frac:.1f}"
-        cv2.putText(img, label, (x + 2, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
-        cv2.putText(img, label, (2, y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        label_x = f"{origin_x + frac * span_x:.2f}"
+        label_y = f"{origin_y + frac * span_y:.2f}"
+        cv2.putText(img, label_x, (x + 2, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        cv2.putText(img, label_y, (2, y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
     return img
 
 
@@ -257,6 +267,7 @@ class AgentToolExecutor:
 
         shot = self._backend.screenshot()
         region_desc = ""
+        gx, gy, gw, gh = 0.0, 0.0, 1.0, 1.0  # 图像左上角全屏坐标 + 跨度（网格标注用）
         if inp:
             rx, ry = inp.get("x"), inp.get("y")
             rw, rh = inp.get("w"), inp.get("h")
@@ -268,9 +279,11 @@ class AgentToolExecutor:
                 y2 = min(y1 + int(float(rh) * fh), fh)
                 if x2 > x1 and y2 > y1:
                     shot = shot[y1:y2, x1:x2]
+                    gx, gy = float(rx), float(ry)
+                    gw, gh = float(rw), float(rh)
                     region_desc = (
                         f"（已裁剪到区域 x={rx},y={ry},w={rw},h={rh}；"
-                        "后续操作坐标仍相对全屏归一化）"
+                        "网格标注与后续操作坐标均相对全屏归一化）"
                     )
         h, w = shot.shape[:2]
         long_side = max(h, w)
@@ -279,7 +292,7 @@ class AgentToolExecutor:
         if long_side > 1536:
             scale = 1536 / long_side
             shot = cv2.resize(shot, (round(w * scale), round(h * scale)))
-        shot = _draw_grid(shot)
+        shot = _draw_grid(shot, gx, gy, gw, gh)
         sh, sw = shot.shape[:2]
         _, buf = cv2.imencode(".png", shot)
         b64 = base64.b64encode(buf.tobytes()).decode("ascii")
@@ -316,12 +329,17 @@ class AgentToolExecutor:
     # ===== 动作工具 =====
 
     def _execute_action(self, name: str, inp: dict[str, Any]) -> dict[str, Any]:
-        """执行动作类工具：前后截图算 diff + 录制 + 返回结构化结果。"""
+        """执行动作类工具：前后截图算 diff + 录制 + 返回结构化结果。
+
+        click/match_icon 未产生界面变化时，在结果里附一张红叉标记实际点击
+        位置的截图——让模型看到自己点到了哪里，闭环修正坐标。
+        """
         if name not in _ACTION_TOOLS:
             raise ValueError(f"未知工具: {name}")
 
         before = self._backend.screenshot()
         self._extra: dict[str, Any] = {}
+        self._mark_point: tuple[float, float] | None = None
         success = True
         error: str | None = None
         try:
@@ -344,9 +362,47 @@ class AgentToolExecutor:
             success, changed=changed, ratio=ratio, error=error,
             ocr_after=ocr_after, extra=self._extra,
         )
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": result_text}]
+        if (
+            name in ("click", "match_icon")
+            and success
+            and not changed
+            and self._mark_point is not None
+        ):
+            blocks.append({
+                "type": "text",
+                "text": "未检测到界面变化。下图红叉为实际点击位置，请对照目标修正坐标。",
+            })
+            blocks.append(self._marker_image_block(after, self._mark_point))
         return {
-            "tool_result_content": [{"type": "text", "text": result_text}],
+            "tool_result_content": blocks,
             "executed_action": {"tool": name, "success": success, "screen_changed": changed},
+        }
+
+    @staticmethod
+    def _marker_image_block(frame: Any, point: tuple[float, float]) -> dict[str, Any]:
+        """在帧上给归一化坐标 point 画红叉标记，返回 image 块（长边 ≤1024）。"""
+        import cv2  # noqa: PLC0415
+
+        img = frame.copy()
+        fh, fw = img.shape[:2]
+        px, py = int(point[0] * fw), int(point[1] * fh)
+        r = max(min(fw, fh) // 40, 8)
+        red = (0, 0, 255)
+        cv2.line(img, (px - r, py - r), (px + r, py + r), red, 2)
+        cv2.line(img, (px - r, py + r), (px + r, py - r), red, 2)
+        cv2.circle(img, (px, py), r + 4, red, 1)
+        if max(fh, fw) > 1024:
+            scale = 1024 / max(fh, fw)
+            img = cv2.resize(img, (round(fw * scale), round(fh * scale)))
+        _, buf = cv2.imencode(".png", img)
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": base64.b64encode(buf.tobytes()).decode("ascii"),
+            },
         }
 
     def _dispatch(self, name: str, inp: dict[str, Any], before: Any) -> str | None:
@@ -364,7 +420,11 @@ class AgentToolExecutor:
             x, y = parse_coords(inp, before)
             if x is None or y is None:
                 return "click 缺少坐标 x/y"
-            self._backend.click(x, y)
+            sx, sy = self._snap_to_feature(x, y, before)
+            if (sx, sy) != (x, y):
+                self._extra["snapped_to"] = [round(sx, 3), round(sy, 3)]
+            self._mark_point = (sx, sy)
+            self._backend.click(sx, sy)
         elif name == "click_text":
             text = str(inp.get("text", ""))
             if not text:
@@ -440,8 +500,52 @@ class AgentToolExecutor:
         }
         if score < 0.6:
             return f"匹配置信度过低({score:.2f})，未点击"
+        self._mark_point = (gx, gy)
         self._backend.click(gx, gy)
         return None
+
+    @staticmethod
+    def _snap_to_feature(
+        x: float, y: float, frame: Any, radius: float = 0.06
+    ) -> tuple[float, float]:
+        """在 (x,y) 半径内吸附到最近的可疑组件中心（轮廓检测）。
+
+        模型坐标估算常偏 0.05-0.1，吸附负责"最后一厘米"：全帧 Canny 边缘 →
+        外轮廓 → 面积过滤（图标量级）→ 取圆心在半径内且最近者（全帧检测避免
+        组件被 ROI 边界裁切）。找不到候选返回原坐标。
+        深色 pixel-art 背景上只是启发式，配合标记反馈兜底。
+
+        Args:
+            x, y: 目标归一化坐标
+            frame: 当前帧（BGR）
+            radius: 吸附半径（归一化，按长边）
+
+        Returns:
+            吸附后的归一化坐标（无候选时为原坐标）。
+        """
+        import cv2  # noqa: PLC0415
+
+        fh, fw = frame.shape[:2]
+        px, py = x * fw, y * fh
+        r = radius * max(fw, fh)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        best: tuple[float, float] | None = None
+        best_d = r
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < 0.001 * fw * fh or area > 0.05 * fw * fh:
+                continue
+            m = cv2.moments(c)
+            if m["m00"] == 0:
+                continue
+            cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
+            d = ((cx - px) ** 2 + (cy - py) ** 2) ** 0.5
+            if d < best_d:
+                best_d = d
+                best = (cx / fw, cy / fh)
+        return best if best is not None else (x, y)
 
     def _record(self, name: str, inp: dict[str, Any]) -> None:
         """同步录制到 GlobalRecorder（映射参考 LLMExplorer._record）。"""
