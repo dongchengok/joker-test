@@ -42,12 +42,16 @@ class AgentStrategy:
         max_conversation_tokens: int = 16000,
         plugin_manager: Any = None,
         max_agent_rounds: int = 6,
+        finish_gate: Any = None,
     ) -> None:
         self._llm = llm
         self._intent = intent
         self._max_tokens = max_conversation_tokens
         self._plugin_manager = plugin_manager
         self._max_agent_rounds = max_agent_rounds
+        # finish 完成验证门：callable() -> str | None（None=通过，str=打回原因）
+        # 由脚本侧注入真实检查（如读游戏 settings.xml），防 LLM 谎报完成
+        self._finish_gate = finish_gate
         self._system_prompt: str = ""
         self._messages: list[dict[str, Any]] = []
         self._screens: list[Screen] = []
@@ -157,14 +161,39 @@ class AgentStrategy:
         name = tool_use.get("name", "")
         inp = tool_use.get("input", {}) or {}
         if name == "finish":
-            self._finish_info = {
-                "goal_completed": bool(inp.get("goal_completed", False)),
-                "summary": str(inp.get("summary", "")),
-            }
+            goal_completed = bool(inp.get("goal_completed", False))
+            summary = str(inp.get("summary", ""))
+            # finish 完成验证门：goal_completed=true 时先过脚本侧真实检查，
+            # 不过门则打回（不当 finish 处理），让 LLM 继续探索/修正
+            if goal_completed and self._finish_gate is not None:
+                try:
+                    reject = self._finish_gate()
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.warning("finish_gate 检查异常（视为通过）：%s", e)
+                    reject = None
+                if reject:
+                    _LOGGER.info("finish_gate 打回：%s", reject)
+                    content = [{
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "success": False,
+                                "gate_rejected": True,
+                                "error": f"完成验证未通过：{reject}。不要谎报完成——继续探索真正达成目标，或确认无法完成时 finish(goal_completed=false)。",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }]
+                    return {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.get("id", ""),
+                        "content": content,
+                    }
+            self._finish_info = {"goal_completed": goal_completed, "summary": summary}
             self._finished = True
-            if self._finish_info["goal_completed"]:
+            if goal_completed:
                 self._goal_completed = True
-            content: list[dict[str, Any]] = [{
+            content = [{
                 "type": "text",
                 "text": json.dumps({"success": True, "message": "探索已结束"}, ensure_ascii=False),
             }]

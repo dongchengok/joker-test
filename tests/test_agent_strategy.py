@@ -334,3 +334,78 @@ def test_step_message_carries_last_step_summary() -> None:
         for b in m["content"] if b.get("type") == "text"
     ]
     assert any("[上一步执行摘要]" in t and "click" in t for t in user_texts)
+
+
+def test_finish_gate_rejects_and_continues() -> None:
+    """finish_gate 打回：goal_completed=true 但检查不过 → 不当 finish，LLM 继续探索。"""
+    backend = _make_backend()
+    llm = _ScriptedLLM([
+        _tool_reply(("finish", {"goal_completed": True, "summary": "假装完成"})),
+        # 打回后 LLM 修正：真正操作再 finish(false)
+        _tool_reply(("finish", {"goal_completed": False, "summary": "实际没完成"})),
+    ])
+    gate_calls = []
+
+    def gate() -> str | None:
+        gate_calls.append(1)
+        return "settings.xml music_vol 仍为 10"
+
+    strategy = AgentStrategy(llm=llm, intent="调音量", finish_gate=gate)
+    decision = _decide(strategy, backend, llm)
+
+    assert len(gate_calls) == 1
+    # 第一次 finish 被打回：没有终止；第二次 finish(false) 正常结束
+    assert decision.stop is True
+    assert decision.goal_completed is False
+    assert strategy._goal_completed is False
+    # 打回反馈进了 tool_result
+    rejected = [
+        b for m in strategy._messages if m["role"] == "user"
+        for b in m["content"]
+        if b.get("type") == "tool_result"
+        and any("gate_rejected" in str(ib.get("text", "")) for ib in b.get("content", []))
+    ]
+    assert len(rejected) == 1
+
+
+def test_finish_gate_passes() -> None:
+    """finish_gate 通过（返回 None）→ 正常结束。"""
+    backend = _make_backend()
+    llm = _ScriptedLLM([
+        _tool_reply(("finish", {"goal_completed": True, "summary": "完成"})),
+    ])
+    strategy = AgentStrategy(llm=llm, intent="调音量", finish_gate=lambda: None)
+    decision = _decide(strategy, backend, llm)
+    assert decision.stop is True
+    assert decision.goal_completed is True
+
+
+def test_finish_gate_exception_treated_as_pass() -> None:
+    """finish_gate 抛异常视为通过（容错，不卡死探索）。"""
+    backend = _make_backend()
+    llm = _ScriptedLLM([
+        _tool_reply(("finish", {"goal_completed": True, "summary": "完成"})),
+    ])
+
+    def bad_gate() -> str | None:
+        raise OSError("settings.xml 读取失败")
+
+    strategy = AgentStrategy(llm=llm, intent="调音量", finish_gate=bad_gate)
+    decision = _decide(strategy, backend, llm)
+    assert decision.goal_completed is True
+
+
+def test_finish_gate_not_called_on_false() -> None:
+    """goal_completed=false 时不过验证门（无法继续是真实结论，无需检查）。"""
+    backend = _make_backend()
+    llm = _ScriptedLLM([
+        _tool_reply(("finish", {"goal_completed": False, "summary": "找不到入口"})),
+    ])
+    gate_calls = []
+    strategy = AgentStrategy(
+        llm=llm, intent="调音量",
+        finish_gate=lambda: gate_calls.append(1) or "不应该被调",
+    )
+    decision = _decide(strategy, backend, llm)
+    assert gate_calls == []
+    assert decision.stop is True and decision.goal_completed is False

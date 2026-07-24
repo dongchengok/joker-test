@@ -83,6 +83,21 @@ AGENT_TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "click_candidate",
+        "description": (
+            "按候选编号点击（最可靠的点击方式，消灭坐标漂移）。"
+            "候选来自 inspect_region / get_ocr_text 最近一次返回的列表编号 "
+            "[n]——感知后直接用编号点击，不要自己再估算坐标。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "index": {"type": "integer", "description": "候选编号（最近一次感知结果里的 [n]）"},
+            },
+            "required": ["index"],
+        },
+    },
+    {
         "name": "press_key",
         "description": "按键（如 escape/enter/字母键）。",
         "input_schema": {
@@ -185,7 +200,18 @@ AGENT_TOOL_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 # 动作类工具（执行前后截图算 diff + 录制）；感知类与 finish 不在此列
-_ACTION_TOOLS = {"click", "click_text", "press_key", "swipe", "long_press", "back", "match_icon"}
+_ACTION_TOOLS = {
+    "click", "click_text", "click_candidate", "press_key", "swipe", "long_press",
+    "back", "match_icon",
+}
+# 重复硬阻断：同一动作工具+相同参数且上次 screen_changed=false，达到次数即拒绝执行
+_REPEAT_BLOCK_THRESHOLD = 3
+# 前置界面 OCR 特征（标题/选角/介绍）：这些界面按 escape 会直接退出游戏进程。
+# 命中即拦截 escape/back，从机制上杜绝 agent 误杀游戏（prompt 是软约束，这里是硬约束）。
+_FRONT_SCREEN_KEYWORDS = (
+    "进入地牢", "选择一位英雄", "PIXELDUNGEON", "PIXEL DUNGEON",
+    "传说在地牢", "开始你自己的冒险",
+)
 
 
 def _draw_grid(
@@ -263,6 +289,11 @@ class AgentToolExecutor:
     def __init__(self, backend: ExecutorBackend, recorder: GlobalRecorder | None = None) -> None:
         self._backend = backend
         self._recorder = recorder
+        # 候选制交互：最近一次感知（get_ocr_text/inspect_region）产出的可点击候选
+        self._candidates: list[dict[str, Any]] = []
+        self._candidate_source: str = ""  # 候选来源工具名（错误提示用）
+        # 重复硬阻断：{(tool, 规范化参数): {"count": int, "changed": bool}}
+        self._action_history: dict[tuple[str, str], dict[str, Any]] = {}
 
     def execute(self, name: str, inp: dict[str, Any]) -> dict[str, Any]:
         """执行一个工具调用。
@@ -283,7 +314,7 @@ class AgentToolExecutor:
                     "executed_action": None,
                 }
             if name == "get_ocr_text":
-                text = json.dumps(self._ocr_items(), ensure_ascii=False)
+                text = self._ocr_text_with_candidates()
                 return {
                     "tool_result_content": [{"type": "text", "text": text}],
                     "executed_action": None,
@@ -303,6 +334,37 @@ class AgentToolExecutor:
             }
 
     # ===== 感知工具 =====
+
+    def _ocr_text_with_candidates(self) -> str:
+        """get_ocr_text 输出：带候选编号的 JSON 文本。
+
+        有坐标的条目登记为候选（kind="text"），同时刷新候选列表——后续
+        click_candidate(index) 直接使用，无需模型再估算坐标。
+        """
+        items = self._ocr_items()
+        self._candidates = [
+            {"x": it["x"], "y": it["y"], "kind": "text", "label": str(it["text"])}
+            for it in items
+            if it["x"] is not None and it["y"] is not None
+        ]
+        self._candidate_source = "get_ocr_text"
+        indexed = [
+            {**it, "index": i}
+            for i, it in enumerate(items)
+            if it["x"] is not None and it["y"] is not None
+        ]
+        no_pos = [it for it in items if it["x"] is None or it["y"] is None]
+        return json.dumps(
+            {
+                "candidates": indexed,
+                "no_position_texts": no_pos,
+                "note": (
+                    "candidates 里 index 可直接给 click_candidate 点击（推荐，无坐标漂移）；"
+                    "有文字的按钮也可 click_text"
+                ),
+            },
+            ensure_ascii=False,
+        )
 
     def _screenshot_blocks(self, inp: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """当前截图 → text 简述 + image 块（base64 png，长边压到 1536 内）。
@@ -403,6 +465,15 @@ class AgentToolExecutor:
             if x1 <= cx * fw <= x2 and y1 <= cy * fh <= y2
         ]
         components.sort(key=lambda c: -c["area"])
+        components = components[:10]
+        for i, c in enumerate(components):
+            c["index"] = i
+        # 登记为候选（kind="component"），click_candidate(index) 可直接点击
+        self._candidates = [
+            {"x": c["x"], "y": c["y"], "kind": "component", "label": f"component[{c['index']}]"}
+            for c in components
+        ]
+        self._candidate_source = "inspect_region"
         texts = [
             item["text"]
             for item in self._ocr_items()
@@ -411,11 +482,12 @@ class AgentToolExecutor:
             and y1 <= item["y"] * fh <= y2
         ]
         note = (
-            f"区域内检测到 {len(components)} 个可疑组件、{len(texts)} 段文字"
+            f"区域内检测到 {len(components)} 个可疑组件、{len(texts)} 段文字；"
+            "组件带 index，可直接 click_candidate(index) 点击（比估算坐标准）"
             if components or texts
             else "该区域未检测到可疑组件或文字（不要凭想象点击这里）"
         )
-        return {"components": components[:10], "texts": texts[:10], "note": note}
+        return {"components": components, "texts": texts[:10], "note": note}
 
     # ===== 动作工具 =====
 
@@ -427,6 +499,25 @@ class AgentToolExecutor:
         """
         if name not in _ACTION_TOOLS:
             raise ValueError(f"未知工具: {name}")
+
+        # 重复硬阻断：同一动作+相同参数反复无效（screen_changed=false）时拒绝执行，
+        # 强制模型换感知手段而不是强迫性重试（防退化循环，如同 swipe×10/tab×4）
+        blocked_reason = self._repeat_blocked_reason(name, inp)
+        if blocked_reason is not None:
+            return {
+                "tool_result_content": [{"type": "text", "text": blocked_reason}],
+                "executed_action": {"tool": name, "success": False, "screen_changed": False},
+            }
+
+        # 前置界面 escape 保护：标题/选角界面按 escape 会退出游戏进程，
+        # agent 曾因此误杀游戏被重启回起点（e2e 第 1 轮根因）。硬拦截。
+        if self._is_escape_action(name, inp):
+            guard = self._front_screen_guard_reason()
+            if guard is not None:
+                return {
+                    "tool_result_content": [{"type": "text", "text": guard}],
+                    "executed_action": {"tool": name, "success": False, "screen_changed": False},
+                }
 
         before = self._backend.screenshot()
         self._extra: dict[str, Any] = {}
@@ -447,6 +538,7 @@ class AgentToolExecutor:
 
         if success:
             self._record(name, inp)
+        self._track_repeat(name, inp, changed)
 
         ocr_after = self._texts_after()
         result_text = self._result_json(
@@ -496,6 +588,96 @@ class AgentToolExecutor:
             },
         }
 
+    @staticmethod
+    def _is_escape_action(name: str, inp: dict[str, Any]) -> bool:
+        """判断该动作是否等价于按 escape（back 工具 或 press_key(escape)）。"""
+        if name == "back":
+            return True
+        return name == "press_key" and str(inp.get("key", "")).lower() == "escape"
+
+    def _front_screen_guard_reason(self) -> str | None:
+        """当前是前置界面（标题/选角）时返回拦截的 tool_result 文本；否则 None。
+
+        通过 OCR 文本特征判断（OCR 失败时不拦截——宁可放行，不误伤对局内 escape）。
+        """
+        try:
+            texts = list(self._backend.state.texts)
+        except Exception:  # noqa: BLE001
+            return None
+        joined = " ".join(texts)
+        hit = next((kw for kw in _FRONT_SCREEN_KEYWORDS if kw in joined), None)
+        if hit is None:
+            return None
+        return self._result_json(
+            False,
+            error=(
+                f"前置界面保护：当前在标题/选角界面（检测到“{hit}”），"
+                "这里按 escape 会直接退出游戏进程。返回上级请点界面内按钮；"
+                "要进地牢探索设置入口，请点“进入地牢”或选择英雄进入对局，"
+                "对局内 escape 才是安全的（打开游戏内菜单）。"
+            ),
+            blocked=True,
+        )
+
+    @staticmethod
+    def _repeat_key(name: str, inp: dict[str, Any]) -> tuple[str, str]:
+        """重复检测键：工具名 + 规范化参数 JSON（click 坐标归一化保留 3 位）。"""
+        return name, json.dumps(inp, sort_keys=True, ensure_ascii=False)
+
+    def _repeat_blocked_reason(self, name: str, inp: dict[str, Any]) -> str | None:
+        """达到重复阈值且从未产生界面变化时，返回阻断的 tool_result 文本；否则 None。"""
+        key = self._repeat_key(name, inp)
+        hist = self._action_history.get(key)
+        if hist is None or hist["changed"] or hist["count"] < _REPEAT_BLOCK_THRESHOLD:
+            return None
+        return self._result_json(
+            False,
+            error=(
+                f"重复硬阻断：相同动作已执行 {hist['count']} 次且界面始终无变化。"
+                "不要再重复这个动作——先用 get_screenshot/inspect_region 重新感知，"
+                "换候选编号或坐标，或改走 click_text/press_key 等其他路径。"
+            ),
+            blocked=True,
+        )
+
+    def _track_repeat(self, name: str, inp: dict[str, Any], changed: bool) -> None:
+        """记录动作结果：changed=True 重置计数；否则累加（供 _repeat_blocked_reason）。"""
+        key = self._repeat_key(name, inp)
+        hist = self._action_history.setdefault(key, {"count": 0, "changed": False})
+        if changed:
+            hist["count"] = 0
+            hist["changed"] = True
+        else:
+            hist["count"] += 1
+
+    def _click_candidate(self, inp: dict[str, Any], before: Any) -> str | None:
+        """click_candidate 实现：按最近一次感知登记的候选编号点击。
+
+        坐标来自感知结果（OCR bbox 中心 / 组件轮廓中心），不经过模型估算，
+        从机制上消灭坐标漂移。执行后清空候选（界面已变，旧编号失效）。
+        """
+        index = inp.get("index")
+        if not isinstance(index, int) or isinstance(index, bool):
+            return "click_candidate 缺少整数参数 index"
+        if not self._candidates:
+            return (
+                "没有可用候选：先调 get_ocr_text 或 inspect_region 获取候选列表，"
+                "再用 click_candidate(index) 点击"
+            )
+        if index < 0 or index >= len(self._candidates):
+            return (
+                f"候选编号 {index} 越界（共 {len(self._candidates)} 个，"
+                f"来自 {self._candidate_source}）。编号只在最近一次感知结果内有效，"
+                "请重新感知后再选。"
+            )
+        cand = self._candidates[index]
+        x, y = float(cand["x"]), float(cand["y"])
+        self._extra["candidate"] = {"index": index, "kind": cand["kind"], "label": cand["label"]}
+        self._mark_point = (x, y)
+        self._candidates = []  # 点击后界面将变化，旧候选立即失效
+        self._backend.click(x, y)
+        return None
+
     def _dispatch(self, name: str, inp: dict[str, Any], before: Any) -> str | None:
         """把工具调用分发到 backend。
 
@@ -542,6 +724,8 @@ class AgentToolExecutor:
             self._backend.press_key("escape")
         elif name == "match_icon":
             return self._match_icon(inp, before)
+        elif name == "click_candidate":
+            return self._click_candidate(inp, before)
         return None
 
     def _match_icon(self, inp: dict[str, Any], frame: Any) -> str | None:
@@ -653,6 +837,14 @@ class AgentToolExecutor:
                     y=self._extra.get("matched_y"),
                     note="match_icon",
                 )
+            elif name == "click_candidate":
+                cand = self._extra.get("candidate", {})
+                self._recorder.record_action(
+                    "click",
+                    x=self._mark_point[0] if self._mark_point else None,
+                    y=self._mark_point[1] if self._mark_point else None,
+                    note=f"click_candidate[{cand.get('index')}]:{cand.get('label', '')}",
+                )
         except Exception:  # noqa: BLE001
             _LOGGER.warning("录制失败 %s", name, exc_info=True)
 
@@ -682,6 +874,7 @@ class AgentToolExecutor:
         error: str | None = None,
         ocr_after: list[str] | None = None,
         extra: dict[str, Any] | None = None,
+        blocked: bool = False,
     ) -> str:
         """动作结果 JSON 文本（tool_result 给 LLM 的事实反馈）。"""
         return json.dumps(
@@ -691,6 +884,7 @@ class AgentToolExecutor:
                 "pixel_diff_ratio": round(ratio, 4),
                 "error": error,
                 "ocr_after": ocr_after or [],
+                **({"blocked": True} if blocked else {}),
                 **(extra or {}),
             },
             ensure_ascii=False,

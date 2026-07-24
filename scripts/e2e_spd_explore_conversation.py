@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -28,6 +29,38 @@ from joker_test.llm.providers.anthropic import AnthropicProvider, load_env
 from joker_test.ocr.providers.rapidocr import RapidOCRProvider
 from joker_test.plugins.manager import PluginManager
 from joker_test.plugins.ocr import OCRPlugin
+
+# finish 完成验证门的判据文件（唯一事实来源，不信 LLM 自报）
+_SPD_SETTINGS = Path.home() / "Library/Application Support/Shattered Pixel Dungeon/settings.xml"
+
+
+def _music_vol() -> int | None:
+    """读 SPD settings.xml 的 music_vol（不存在返回 None）。"""
+    import re
+
+    if not _SPD_SETTINGS.exists():
+        return None
+    m = re.search(
+        r'<entry key="music_vol">(\d+)</entry>',
+        _SPD_SETTINGS.read_text(encoding="utf-8"),
+    )
+    return int(m.group(1)) if m else None
+
+
+def make_finish_gate() -> Callable[[], str | None]:
+    """finish 完成验证门：goal_completed=true 时校验 settings.xml music_vol ∈ {4,5}。
+
+    Returns:
+        callable() -> str | None（None=通过，str=打回原因）。
+    """
+
+    def gate() -> str | None:
+        vol = _music_vol()
+        if vol in (4, 5):
+            return None
+        return f"settings.xml 的 music_vol={vol}（要求 4 或 5），目标实际未达成"
+
+    return gate
 
 
 def main() -> int:
@@ -115,6 +148,7 @@ def main() -> int:
         intent=intent,
         max_conversation_tokens=16000,
         plugin_manager=plugin_manager,
+        finish_gate=make_finish_gate(),
     )
 
     explorer = LLMExplorer(
@@ -161,7 +195,9 @@ def main() -> int:
 
     trace_finalize()
 
-    # 生成报告
+    # 生成报告（含 settings.xml 判据——唯一事实来源）
+    final_vol = _music_vol()
+    criterion_met = final_vol in (4, 5)
     report = {
         "intent": intent,
         "strategy": "agent",
@@ -169,6 +205,7 @@ def main() -> int:
         "screen_names": [s.name or s.id for s in state_map.screens],
         "flow_steps": len(flow.steps),
         "flow_dir": str(flow_dir),
+        "criterion": {"music_vol": final_vol, "met": criterion_met},
     }
 
     report_path = flow_dir / "explore_report.json"
@@ -177,6 +214,10 @@ def main() -> int:
     )
     print(f"\n✓ 报告 → {report_path}")
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    print(
+        f"\n判据：settings.xml music_vol={final_vol} → "
+        + ("✓ 达成（4/5）" if criterion_met else "✗ 未达成（要求 4 或 5）")
+    )
     return 0
 
 
